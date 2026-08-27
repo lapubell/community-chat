@@ -12,8 +12,8 @@ import { onWsEvent } from "@/stores/auth";
 const route = useRoute();
 const auth = useAuthStore();
 const chat = useChatStore();
-const { groupMessages, typingNames, dmConversations, dmMessages, typingPeer } = storeToRefs(chat);
-const { me } = storeToRefs(auth);
+const { groupMessages, dmConversations, dmMessages, typingPeer } = storeToRefs(chat);
+const { me, typingNames } = storeToRefs(auth);
 
 const scrollRef = ref(null);
 const mobileSidebar = ref(false);
