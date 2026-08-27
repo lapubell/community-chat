@@ -1,0 +1,166 @@
+"""Database engine, session factory, and ORM models. Single SQLite file by default.
+
+Set DATABASE_URL=sqlite:///:memory: for throwaway in-memory databases (tests).
+"""
+import os
+from datetime import datetime, timezone
+from pathlib import Path
+
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    create_engine,
+)
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
+from sqlalchemy.pool import StaticPool
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+DATA_DIR = Path(os.environ.get("DATA_DIR", str(BASE_DIR / "data")))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+DATABASE_URL = os.environ.get("DATABASE_URL", f"sqlite:///{DATA_DIR / 'chat.db'}")
+
+_IS_MEMORY = DATABASE_URL in ("sqlite:///:memory:", "sqlite://")
+connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
+_engine_kwargs = {"connect_args": connect_args}
+if _IS_MEMORY:
+    # A single shared connection so every session sees the same in-memory DB.
+    _engine_kwargs["poolclass"] = StaticPool
+engine = create_engine(DATABASE_URL, **_engine_kwargs)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    handle: Mapped[str] = mapped_column(String(32), unique=True, nullable=False)
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    display_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True)
+    phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    avatar_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    bio: Mapped[str | None] = mapped_column(Text, nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    invites_used: Mapped[list["Invite"]] = relationship("Invite", foreign_keys="Invite.user_id")
+    dm_settings: Mapped["DMSettings | None"] = relationship("DMSettings", uselist=False, back_populates="user", cascade="all, delete-orphan")
+
+
+class Invite(Base):
+    __tablename__ = "invites"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    code: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    max_uses: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    times_used: Mapped[int] = mapped_column(Integer, default=0)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    note: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class DMSettings(Base):
+    __tablename__ = "dm_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), unique=True, nullable=False)
+    do_not_disturb: Mapped[bool] = mapped_column(Boolean, default=False)
+    notify_mentions: Mapped[bool] = mapped_column(Boolean, default=True)
+    notify_replies: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    user: Mapped["User"] = relationship("User", back_populates="dm_settings")
+
+
+class File(Base):
+    __tablename__ = "files"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    storage_name: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    content_type: Mapped[str] = mapped_column(String(128), nullable=False)
+    size: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    owner: Mapped["User"] = relationship("User", foreign_keys=[owner_id])
+
+
+class GroupMessage(Base):
+    __tablename__ = "group_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    author_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    file_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    file_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    file_content_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    reply_to_id: Mapped[int | None] = mapped_column(ForeignKey("group_messages.id"), nullable=True)
+    edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    author: Mapped["User"] = relationship("User", foreign_keys=[author_id])
+    reply_to: Mapped["GroupMessage | None"] = relationship("GroupMessage", remote_side=[id], foreign_keys=[reply_to_id])
+
+
+class DirectMessage(Base):
+    __tablename__ = "direct_messages"
+    __table_args__ = (
+        UniqueConstraint("sender_id", "recipient_id", "id", name="unique_dm"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    sender_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    recipient_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    file_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    file_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    file_content_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    sender: Mapped["User"] = relationship("User", foreign_keys=[sender_id])
+    recipient: Mapped["User"] = relationship("User", foreign_keys=[recipient_id])
+
+
+class Reaction(Base):
+    __tablename__ = "reactions"
+    __table_args__ = (
+        UniqueConstraint("emoji", "group_message_id", "user_id", name="unique_reaction_group"),
+        UniqueConstraint("emoji", "dm_message_id", "user_id", name="unique_reaction_dm"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    emoji: Mapped[str] = mapped_column(String(32), nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    group_message_id: Mapped[int | None] = mapped_column(ForeignKey("group_messages.id"), nullable=True)
+    dm_message_id: Mapped[int | None] = mapped_column(ForeignKey("direct_messages.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    user: Mapped["User"] = relationship("User")
+
+
+def create_all() -> None:
+    Base.metadata.create_all(engine)
+
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()

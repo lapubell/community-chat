@@ -1,0 +1,22 @@
+# Keep the Docker build context clean. The build context is the repo root
+# (see docker-compose.yml `context: .`), so ignore local artifacts that
+# must never be baked into the image.
+
+# Local runtime data (DB + uploads) — persisted via volumes, never baked in
+backend/data/
+backend/uploads/
+
+# Python virtualenvs & caches
+backend/.venv/
+**/__pycache__/
+**/*.pyc
+backend/.pytest_cache/
+
+# Frontend build artifacts are regenerated in the image
+frontend/node_modules/
+frontend/dist/
+
+# Dev-only tooling
+frontend/.vscode/
+.git/
+.gitignore

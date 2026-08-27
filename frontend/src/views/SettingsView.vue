@@ -1,0 +1,396 @@
+<script setup>
+import { ref, onMounted } from "vue";
+import { storeToRefs } from "pinia";
+import { useAuthStore } from "@/stores/auth";
+import { api } from "@/api";
+import { toast } from "@/composables/useToasts";
+import Sidebar from "@/components/Sidebar.vue";
+import Avatar from "@/components/Avatar.vue";
+
+const auth = useAuthStore();
+const { me } = storeToRefs(auth);
+const mobileSidebar = ref(false);
+
+const displayName = ref("");
+const email = ref("");
+const phone = ref("");
+const bio = ref("");
+const avatarFile = ref(null);
+const avatarPreview = ref(null);
+const savingProfile = ref(false);
+
+const currentPassword = ref("");
+const newPassword = ref("");
+const savingPassword = ref(false);
+
+const dnd = ref(false);
+const notifyMentions = ref(true);
+const notifyReplies = ref(true);
+const savingSettings = ref(false);
+
+const invites = ref([]);
+const inviteMaxUses = ref(1);
+const inviteNote = ref("");
+const creatingInvite = ref(false);
+
+onMounted(async () => {
+  if (me.value) {
+    displayName.value = me.value.display_name || "";
+    email.value = me.value.email || "";
+    phone.value = me.value.phone || "";
+    bio.value = me.value.bio || "";
+    avatarPreview.value = me.value.avatar_url;
+  }
+  try {
+    const s = await api.get("/api/auth/me/settings");
+    dnd.value = s.do_not_disturb;
+    notifyMentions.value = s.notify_mentions;
+    notifyReplies.value = s.notify_replies;
+  } catch {}
+  loadInvites();
+});
+
+async function loadInvites() {
+  try {
+    invites.value = await api.get("/api/invites");
+  } catch {}
+}
+
+async function saveProfile() {
+  savingProfile.value = true;
+  try {
+    const updated = await api.patch("/api/auth/me/profile", {
+      display_name: displayName.value.trim() || null,
+      email: email.value.trim() || null,
+      phone: phone.value.trim() || null,
+      bio: bio.value.trim() || null,
+      avatar_url: avatarPreview.value,
+    });
+    auth.user = updated;
+    toast("Profile updated", "success");
+  } catch (e) {
+    toast(e.message, "error");
+  } finally {
+    savingProfile.value = false;
+  }
+}
+
+async function onAvatarFile(e) {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  if (!file.type.startsWith("image/")) {
+    toast("Choose an image file", "error");
+    return;
+  }
+  const fd = new FormData();
+  fd.append("file", file);
+  const result = await api.upload("/api/files/upload", fd);
+  avatarFile.value = result;
+  avatarPreview.value = result.url;
+}
+
+async function changePassword() {
+  savingPassword.value = true;
+  try {
+    await api.post("/api/auth/me/password", {
+      current_password: currentPassword.value,
+      new_password: newPassword.value,
+    });
+    currentPassword.value = "";
+    newPassword.value = "";
+    toast("Password changed", "success");
+  } catch (e) {
+    toast(e.message, "error");
+  } finally {
+    savingPassword.value = false;
+  }
+}
+
+async function saveSettings() {
+  savingSettings.value = true;
+  try {
+    await api.put("/api/auth/me/settings", {
+      do_not_disturb: dnd.value,
+      notify_mentions: notifyMentions.value,
+      notify_replies: notifyReplies.value,
+    });
+    toast("Settings saved", "success");
+  } catch (e) {
+    toast(e.message, "error");
+  } finally {
+    savingSettings.value = false;
+  }
+}
+
+async function createInvite() {
+  creatingInvite.value = true;
+  try {
+    const invite = await api.post("/api/invites", {
+      max_uses: inviteMaxUses.value,
+      note: inviteNote.value.trim() || null,
+    });
+    invites.value.unshift(invite);
+    inviteNote.value = "";
+    toast("Invite created: " + invite.code, "success");
+  } catch (e) {
+    toast(e.message, "error");
+  } finally {
+    creatingInvite.value = false;
+  }
+}
+
+async function copyInvite(code) {
+  await navigator.clipboard.writeText(code);
+  toast("Copied to clipboard", "success");
+}
+
+async function revokeInvite(invite) {
+  if (!confirm(`Revoke invite ${invite.code}?`)) return;
+  await api.del(`/api/invites/${invite.id}`);
+  await loadInvites();
+  toast("Invite revoked", "success");
+}
+
+function inviteLink(code) {
+  return `${window.location.origin}/login?code=${code}`;
+}
+</script>
+
+<template>
+  <div class="settings-layout">
+    <Sidebar :mobile-open="mobileSidebar" @close="mobileSidebar = false" />
+
+    <section class="settings-main">
+      <header class="page-header">
+        <button class="mobile-toggle" @click="mobileSidebar = true">☰</button>
+        <h1>Settings</h1>
+      </header>
+
+      <div class="settings-grid">
+        <div class="card settings-card">
+          <h2>Profile</h2>
+          <div class="avatar-row">
+            <Avatar :user="{ ...me, avatar_url: avatarPreview }" size="lg" />
+            <label class="btn btn-ghost btn-sm file-label">
+              <input type="file" accept="image/*" @change="onAvatarFile" />
+              Change avatar
+            </label>
+          </div>
+          <label>Display name
+            <input v-model="displayName" maxlength="64" />
+          </label>
+          <label>Email
+            <input v-model="email" type="email" />
+          </label>
+          <label>Phone
+            <input v-model="phone" type="tel" />
+          </label>
+          <label>Bio
+            <textarea v-model="bio" rows="3" maxlength="500" />
+          </label>
+          <button class="btn" @click="saveProfile" :disabled="savingProfile">
+            {{ savingProfile ? "Saving…" : "Save profile" }}
+          </button>
+        </div>
+
+        <div class="card settings-card">
+          <h2>Notifications</h2>
+          <label class="toggle-row">
+            <span>Do not disturb</span>
+            <input v-model="dnd" type="checkbox" class="toggle" />
+          </label>
+          <label class="toggle-row">
+            <span>Notify on mentions</span>
+            <input v-model="notifyMentions" type="checkbox" class="toggle" />
+          </label>
+          <label class="toggle-row">
+            <span>Notify on replies</span>
+            <input v-model="notifyReplies" type="checkbox" class="toggle" />
+          </label>
+          <button class="btn" @click="saveSettings" :disabled="savingSettings">
+            {{ savingSettings ? "Saving…" : "Save settings" }}
+          </button>
+        </div>
+
+        <div class="card settings-card">
+          <h2>Change password</h2>
+          <label>Current password
+            <input v-model="currentPassword" type="password" autocomplete="current-password" />
+          </label>
+          <label>New password
+            <input v-model="newPassword" type="password" minlength="6" autocomplete="new-password" />
+          </label>
+          <button class="btn" @click="changePassword" :disabled="savingPassword || !currentPassword || newPassword.length < 6">
+            {{ savingPassword ? "Changing…" : "Update password" }}
+          </button>
+        </div>
+
+        <div class="card settings-card">
+          <h2>Invite friends</h2>
+          <p class="hint">Share an invite code with a family member or friend so they can join.</p>
+          <div class="invite-create">
+            <div class="invite-row">
+              <label class="invite-label">
+                Uses
+                <input v-model.number="inviteMaxUses" type="number" min="1" max="100" class="invite-num" />
+              </label>
+              <label class="invite-label flex1">
+                Note
+                <input v-model="inviteNote" placeholder="e.g. for Grandma" maxlength="200" />
+              </label>
+            </div>
+            <button class="btn" @click="createInvite" :disabled="creatingInvite">
+              {{ creatingInvite ? "Creating…" : "Create invite" }}
+            </button>
+          </div>
+
+          <div class="invite-list">
+            <div v-for="inv in invites" :key="inv.id" class="invite-item" :class="{ inactive: !inv.is_active }">
+              <div class="invite-code-wrap">
+                <code class="invite-code">{{ inv.code }}</code>
+                <button class="btn btn-ghost btn-sm" @click="copyInvite(inv.code)">Copy</button>
+              </div>
+              <div class="invite-meta">
+                <span v-if="inv.note">📝 {{ inv.note }}</span>
+                <span>{{ inv.times_used }}/{{ inv.max_uses }} used</span>
+                <span v-if="inv.is_active" class="dot dot-green" title="Active" />
+                <span v-else class="dot dot-gray" title="Used up or revoked" />
+              </div>
+              <button v-if="inv.is_active" class="btn btn-ghost btn-sm danger-text" @click="revokeInvite(inv)">
+                Revoke
+              </button>
+            </div>
+            <div v-if="invites.length === 0" class="invites-empty">No invites yet.</div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+</template>
+
+<style scoped>
+.settings-layout {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+.settings-main {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+}
+.page-header { margin-bottom: 20px; }
+.page-header h1 { font-size: 22px; }
+.mobile-toggle { display: none; }
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 16px;
+  max-width: 900px;
+}
+.settings-card h2 { font-size: 16px; margin-bottom: 16px; }
+.settings-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.settings-card label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.avatar-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.file-label { position: relative; overflow: hidden; display: inline-block; }
+.file-label input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+  width: 100%;
+}
+.hint { color: var(--text-muted); font-size: 13px; }
+.toggle-row {
+  flex-direction: row !important;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--text) !important;
+}
+.toggle {
+  width: 40px;
+  height: 22px;
+  appearance: none;
+  background: var(--border);
+  border-radius: 11px;
+  position: relative;
+  cursor: pointer;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+.toggle::after {
+  content: "";
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  top: 2px;
+  left: 2px;
+  transition: left 0.2s;
+}
+.toggle:checked { background: var(--accent); }
+.toggle:checked::after { left: 20px; }
+.invite-create {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  background: var(--bg-hover);
+  border-radius: var(--radius-sm);
+}
+.invite-row { display: flex; gap: 12px; }
+.invite-label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--text-muted); }
+.invite-label.flex1 { flex: 1; }
+.invite-num { width: 70px; }
+.invite-list { display: flex; flex-direction: column; gap: 10px; }
+.invite-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.invite-item.inactive { opacity: 0.6; }
+.invite-code-wrap { display: flex; align-items: center; gap: 8px; }
+.invite-code {
+  font-family: monospace;
+  font-size: 14px;
+  background: var(--bg);
+  padding: 4px 8px;
+  border-radius: 4px;
+  letter-spacing: 0.05em;
+}
+.invite-meta {
+  flex: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  align-items: center;
+}
+.danger-text { color: var(--danger); }
+.invites-empty { color: var(--text-muted); font-size: 13px; padding: 8px; }
+
+@media (max-width: 768px) {
+  .mobile-toggle { display: inline-block; font-size: 18px; color: var(--text); }
+  .invite-row { flex-direction: column; }
+}
+</style>

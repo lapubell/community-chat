@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# Runtime data — never commit the DB or uploads
+backend/data/
+backend/uploads/
+*.db
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Docker volumes are named, but ignore any local bind-mount residue
+*.sqlite3
+
+# OS / editor
+.DS_Store
+.idea/

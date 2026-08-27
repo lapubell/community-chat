@@ -1,0 +1,203 @@
+import os
+import secrets
+
+import string
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, EmailStr, Field, field_validator
+from sqlalchemy import func, select
+
+from ..db import SessionLocal, get_db
+from ..models import DMSettings, Invite, User
+from ..core.security import create_access_token, get_current_user, hash_password
+
+router = APIRouter()
+
+
+def public_user(user: User) -> dict:
+    return {
+        "id": user.id,
+        "handle": user.handle,
+        "display_name": user.display_name or user.handle,
+        "email": user.email,
+        "phone": user.phone,
+        "avatar_url": user.avatar_url,
+        "bio": user.bio,
+        "created_at": user.created_at.isoformat(),
+    }
+
+
+class RegisterRequest(BaseModel):
+    invite_code: str
+    handle: str = Field(min_length=3, max_length=32)
+    password: str = Field(min_length=6, max_length=128)
+    display_name: str | None = Field(default=None, max_length=64)
+    email: EmailStr | None = None
+    phone: str | None = Field(default=None, max_length=32)
+
+    @field_validator("handle")
+    @classmethod
+    def valid_handle(cls, v: str) -> str:
+        v = v.strip().lower()
+        if not v or not all(c in string.ascii_letters + string.digits + "._-" for c in v):
+            raise ValueError("handle may only contain letters, numbers, and . _ -")
+        return v
+
+    @field_validator("display_name")
+    @classmethod
+    def clean_display_name(cls, v: str | None) -> str | None:
+        return v.strip() if v else v
+
+
+class LoginRequest(BaseModel):
+    handle: str
+    password: str
+
+
+class LoginResponse(BaseModel):
+    token: str
+    user: dict
+    is_new_user: bool = False
+
+
+@router.post("/register", response_model=LoginResponse)
+async def register(req: RegisterRequest, db=Depends(get_db)):
+    if db.execute(select(User).where(User.handle == req.handle)).scalar_one_or_none():
+        raise HTTPException(status_code=409, detail="Handle already taken")
+
+    invite = db.execute(select(Invite).where(Invite.code == req.invite_code.strip())).scalar_one_or_none()
+    if invite is None or invite.used_at is not None or invite.times_used >= invite.max_uses:
+        raise HTTPException(status_code=403, detail="Invalid or expired invite code")
+
+    user = User(
+        handle=req.handle,
+        display_name=req.display_name or req.handle,
+        email=req.email,
+        phone=req.phone,
+        is_active=True,
+        password_hash=hash_password(req.password),
+    )
+    db.add(user)
+    db.flush()
+
+    invite.times_used += 1
+    invite.created_by = invite.created_by or user.id
+    if invite.times_used >= invite.max_uses:
+        invite.used_at = datetime.now(timezone.utc)
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    db.refresh(invite)
+
+    token = create_access_token(user.id)
+    return LoginResponse(token=token, user=public_user(user), is_new_user=True)
+
+
+@router.post("/login", response_model=LoginResponse)
+async def login(req: LoginRequest, db=Depends(get_db)):
+    user = db.execute(select(User).where(User.handle == req.handle.strip().lower())).scalar_one_or_none()
+    if user is None or not user.password_hash:
+        raise HTTPException(status_code=401, detail="Invalid handle or password")
+    from ..core.security import verify_password
+
+    if not verify_password(req.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid handle or password")
+    token = create_access_token(user.id)
+    return LoginResponse(token=token, user=public_user(user))
+
+
+@router.get("/me")
+async def me(user: User = Depends(get_current_user)):
+    return public_user(user)
+
+
+@router.get("/users")
+async def list_users(user: User = Depends(get_current_user), db=Depends(get_db)):
+    rows = db.execute(select(User).where(User.is_active == True).order_by(User.display_name)).scalars().all()
+    return [public_user(u) for u in rows]
+
+
+@router.get("/users/{user_id}")
+async def get_user(user_id: int, user: User = Depends(get_current_user), db=Depends(get_db)):
+    target = db.get(User, user_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return public_user(target)
+
+
+class ProfileUpdate(BaseModel):
+    display_name: str | None = Field(default=None, max_length=64)
+    email: EmailStr | None = None
+    phone: str | None = Field(default=None, max_length=32)
+    bio: str | None = Field(default=None, max_length=500)
+    avatar_url: str | None = Field(default=None, max_length=512)
+
+
+@router.patch("/me/profile")
+async def update_profile(req: ProfileUpdate, user: User = Depends(get_current_user), db=Depends(get_db)):
+    for field_name in ("display_name", "email", "phone", "bio", "avatar_url"):
+        value = getattr(req, field_name)
+        if value is not None:
+            setattr(user, field_name, value.strip() if isinstance(value, str) else value)
+    db.commit()
+    db.refresh(user)
+    return public_user(user)
+
+
+class PasswordUpdate(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=6, max_length=128)
+
+
+@router.post("/me/password")
+async def change_password(req: PasswordUpdate, user: User = Depends(get_current_user), db=Depends(get_db)):
+    from ..core.security import verify_password
+
+    if not user.password_hash or not verify_password(req.current_password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Current password is incorrect")
+    user.password_hash = hash_password(req.new_password)
+    db.commit()
+    return {"ok": True}
+
+
+@router.get("/me/settings")
+async def get_settings(user: User = Depends(get_current_user), db=Depends(get_db)):
+    settings = user.dm_settings
+    if settings is None:
+        settings = DMSettings(user_id=user.id)
+        db.add(settings)
+        db.commit()
+    return {
+        "do_not_disturb": settings.do_not_disturb,
+        "notify_mentions": settings.notify_mentions,
+        "notify_replies": settings.notify_replies,
+    }
+
+
+class SettingsUpdate(BaseModel):
+    do_not_disturb: bool
+    notify_mentions: bool
+    notify_replies: bool
+
+
+@router.put("/me/settings")
+async def put_settings(req: SettingsUpdate, user: User = Depends(get_current_user), db=Depends(get_db)):
+    settings = user.dm_settings
+    if settings is None:
+        settings = DMSettings(user_id=user.id)
+        db.add(settings)
+    settings.do_not_disturb = req.do_not_disturb
+    settings.notify_mentions = req.notify_mentions
+    settings.notify_replies = req.notify_replies
+    db.commit()
+    return {
+        "do_not_disturb": settings.do_not_disturb,
+        "notify_mentions": settings.notify_mentions,
+        "notify_replies": settings.notify_replies,
+    }
+
+
+@router.post("/me/logout")
+async def logout(user: User = Depends(get_current_user)):
+    return {"ok": True}

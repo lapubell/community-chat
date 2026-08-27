@@ -1,0 +1,112 @@
+<script setup>
+import { onMounted, ref } from "vue";
+import { useRoute, useRouter } from "vue-router";
+import { useAuthStore, onWsEvent } from "@/stores/auth";
+import { useChatStore } from "@/stores/chat";
+import NavBar from "@/components/NavBar.vue";
+import Toasts from "@/components/Toasts.vue";
+
+const auth = useAuthStore();
+const chat = useChatStore();
+const route = useRoute();
+const router = useRouter();
+
+const installPrompt = ref(null);
+const notifPermission = ref("Notification" in window ? Notification.permission : "denied");
+let unsub = null;
+
+function beforeInstallPrompt(e) {
+  e.preventDefault();
+  installPrompt.value = e;
+}
+
+function handleInstall() {
+  if (!installPrompt.value) return;
+  installPrompt.value.prompt();
+  installPrompt.value = null;
+}
+
+function requestNotifPermission() {
+  if (!("Notification" in window) || notifPermission.value === "denied") return;
+  Notification.requestPermission().then((p) => (notifPermission.value = p));
+}
+
+function notify(title, body, url = "/") {
+  if (notifPermission.value !== "granted") return;
+  try {
+    const n = new Notification(title, { body, icon: "/icon-192.png", tag: title + body });
+    n.onclick = () => {
+      window.focus();
+      window.location.href = url;
+    };
+  } catch {}
+}
+
+function handleWsMessage(event, msg) {
+  if (!auth.user) return;
+  if (msg.type === "message.new" && msg.channel === "group" && msg.message.author.id !== auth.user.id) {
+    const text = msg.message.text || "sent an attachment";
+    notify("Group message", `${msg.message.author.display_name}: ${text}`, "/");
+  }
+  if (msg.type === "dm.new") {
+    const text = msg.message.text || "sent an attachment";
+    notify(`DM from ${msg.message.sender.display_name}`, text, `/dm/${msg.message.sender.id}`);
+    chat.loadDmConversations();
+  }
+}
+
+onMounted(async () => {
+  window.addEventListener("beforeinstallprompt", beforeInstallPrompt);
+  chat.initWs();
+  unsub = onWsEvent(handleWsMessage);
+
+  if (auth.isAuthenticated) {
+    await auth.refreshUser().catch(() => {});
+    await auth.loadUsers().catch(() => {});
+    auth.connectWs();
+    await chat.loadGroupMessages().catch(() => {});
+    await chat.loadDmConversations().catch(() => {});
+    requestNotifPermission();
+  }
+});
+</script>
+
+<template>
+  <div class="app-shell">
+    <NavBar
+      v-if="auth.isAuthenticated"
+      :can-install="!!installPrompt"
+      @install="handleInstall"
+      @logout="() => { auth.logout(); router.push('/login'); }"
+    />
+    <main class="app-main">
+      <RouterView />
+    </main>
+    <Toasts />
+    <button v-if="installPrompt" class="btn install-banner" @click="handleInstall">
+      Install app
+    </button>
+  </div>
+</template>
+
+<style scoped>
+.app-shell {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+.app-main {
+  flex: 1;
+  overflow: hidden;
+  display: flex;
+}
+.install-banner {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+  box-shadow: var(--shadow);
+  padding: 12px 24px;
+}
+</style>
