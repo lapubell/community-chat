@@ -52,6 +52,9 @@ watch(
       <button class="nav-item" :class="{ active: isNavActive('members') }" @click="go('members')">
         <span class="nav-icon">👥</span> Members
       </button>
+      <button class="nav-item" :class="{ active: isNavActive('families') }" @click="go('families')">
+        <span class="nav-icon">🏠</span> Families
+      </button>
       <button class="nav-item" :class="{ active: isNavActive('gallery') }" @click="go('gallery')">
         <span class="nav-icon">🖼️</span> Gallery
       </button>

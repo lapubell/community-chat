@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from ..db import SessionLocal, get_db
-from ..models import Invite, User
+from ..models import Family, Invite, User
 from ..core.security import get_current_user
 
 router = APIRouter()
@@ -18,6 +18,7 @@ CODE_LENGTH = 8
 class InviteCreateRequest(BaseModel):
     max_uses: int = Field(default=1, ge=1, le=100)
     note: str | None = Field(default=None, max_length=200)
+    family_id: int | None = Field(default=None)
 
 
 class InviteOut(BaseModel):
@@ -27,6 +28,8 @@ class InviteOut(BaseModel):
     times_used: int
     is_active: bool
     note: str | None
+    family_id: int | None = None
+    family_name: str | None = None
     created_at: str
     used_at: str | None
 
@@ -35,7 +38,11 @@ def generate_code() -> str:
     return "".join(secrets.choice(ALPHABET) for _ in range(CODE_LENGTH))
 
 
-def serialize(invite: Invite) -> InviteOut:
+def serialize(invite: Invite, db) -> InviteOut:
+    family_name = None
+    if invite.family_id is not None:
+        fam = db.get(Family, invite.family_id)
+        family_name = fam.name if fam else None
     return InviteOut(
         id=invite.id,
         code=invite.code,
@@ -43,6 +50,8 @@ def serialize(invite: Invite) -> InviteOut:
         times_used=invite.times_used,
         is_active=invite.used_at is None and invite.times_used < invite.max_uses,
         note=invite.note,
+        family_id=invite.family_id,
+        family_name=family_name,
         created_at=invite.created_at.isoformat(),
         used_at=invite.used_at.isoformat() if invite.used_at else None,
     )
@@ -51,13 +60,21 @@ def serialize(invite: Invite) -> InviteOut:
 @router.get("", response_model=list[InviteOut])
 async def list_invites(user: User = Depends(get_current_user), db=Depends(get_db)):
     rows = db.execute(select(Invite).order_by(Invite.created_at.desc())).scalars().all()
-    return [serialize(r) for r in rows]
+    return [serialize(r, db) for r in rows]
 
 
 @router.post("", response_model=InviteOut, status_code=201)
 async def create_invite(
     req: InviteCreateRequest, user: User = Depends(get_current_user), db=Depends(get_db)
 ):
+    # If a family was specified, it must exist.
+    family_id = None
+    if req.family_id is not None:
+        family = db.get(Family, req.family_id)
+        if family is None:
+            raise HTTPException(status_code=404, detail="Family not found")
+        family_id = family.id
+
     for _ in range(25):
         code = generate_code()
         existing = db.execute(select(Invite).where(Invite.code == code)).scalar_one_or_none()
@@ -72,11 +89,12 @@ async def create_invite(
         times_used=0,
         created_by=user.id,
         note=req.note,
+        family_id=family_id,
     )
     db.add(invite)
     db.commit()
     db.refresh(invite)
-    return serialize(invite)
+    return serialize(invite, db)
 
 
 @router.delete("/{invite_id}")

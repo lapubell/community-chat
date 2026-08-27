@@ -2,12 +2,14 @@
 import { ref, onMounted } from "vue";
 import { storeToRefs } from "pinia";
 import { useAuthStore } from "@/stores/auth";
+import { useFamiliesStore } from "@/stores/families";
 import { api } from "@/api";
 import { toast } from "@/composables/useToasts";
 import Sidebar from "@/components/Sidebar.vue";
 import Avatar from "@/components/Avatar.vue";
 
 const auth = useAuthStore();
+const families = useFamiliesStore();
 const { me } = storeToRefs(auth);
 const mobileSidebar = ref(false);
 
@@ -31,6 +33,7 @@ const savingSettings = ref(false);
 const invites = ref([]);
 const inviteMaxUses = ref(1);
 const inviteNote = ref("");
+const inviteFamilyId = ref(null);
 const creatingInvite = ref(false);
 
 onMounted(async () => {
@@ -48,6 +51,7 @@ onMounted(async () => {
     notifyReplies.value = s.notify_replies;
   } catch {}
   loadInvites();
+  families.load().catch(() => {});
 });
 
 async function loadInvites() {
@@ -128,6 +132,7 @@ async function createInvite() {
     const invite = await api.post("/api/invites", {
       max_uses: inviteMaxUses.value,
       note: inviteNote.value.trim() || null,
+      family_id: inviteFamilyId.value || null,
     });
     invites.value.unshift(invite);
     inviteNote.value = "";
@@ -227,9 +232,22 @@ function inviteLink(code) {
 
         <div class="card settings-card">
           <h2>Invite friends</h2>
-          <p class="hint">Share an invite code with a family member or friend so they can join.</p>
+          <p class="hint">
+            Share an invite code with a family member or friend so they can join.
+            Pick a family to add them to, or leave it as "No family".
+            Manage families under <router-link to="/families">Families</router-link>.
+          </p>
           <div class="invite-create">
             <div class="invite-row">
+              <label class="invite-label">
+                Family
+                <select v-model="inviteFamilyId" class="family-select">
+                  <option :value="null">No family</option>
+                  <option v-for="f in families.families" :key="f.id" :value="f.id">
+                    {{ f.name }}
+                  </option>
+                </select>
+              </label>
               <label class="invite-label">
                 Uses
                 <input v-model.number="inviteMaxUses" type="number" min="1" max="100" class="invite-num" />
@@ -251,6 +269,7 @@ function inviteLink(code) {
                 <button class="btn btn-ghost btn-sm" @click="copyInvite(inv.code)">Copy</button>
               </div>
               <div class="invite-meta">
+                <span v-if="inv.family_name" class="family-badge">🏠 {{ inv.family_name }}</span>
                 <span v-if="inv.note">📝 {{ inv.note }}</span>
                 <span>{{ inv.times_used }}/{{ inv.max_uses }} used</span>
                 <span v-if="inv.is_active" class="dot dot-green" title="Active" />
@@ -358,6 +377,14 @@ function inviteLink(code) {
 .invite-label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--text-muted); }
 .invite-label.flex1 { flex: 1; }
 .invite-num { width: 70px; }
+.family-select { width: 100%; min-width: 140px; }
+.family-badge {
+  background: var(--accent-soft);
+  color: var(--accent-hover);
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 8px;
+}
 .invite-list { display: flex; flex-direction: column; gap: 10px; }
 .invite-item {
   display: flex;

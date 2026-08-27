@@ -15,6 +15,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     create_engine,
+    ForeignKeyConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -54,10 +55,26 @@ class User(Base):
     avatar_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
     bio: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    family_id: Mapped[int | None] = mapped_column(
+        ForeignKey("families.id", use_alter=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
+    family: Mapped["Family | None"] = relationship("Family", foreign_keys=[family_id], back_populates="members")
     invites_used: Mapped[list["Invite"]] = relationship("Invite", foreign_keys="Invite.user_id")
     dm_settings: Mapped["DMSettings | None"] = relationship("DMSettings", uselist=False, back_populates="user", cascade="all, delete-orphan")
+
+
+class Family(Base):
+    __tablename__ = "families"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(80), unique=True, nullable=False)
+    description: Mapped[str | None] = mapped_column(String(280), nullable=True)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    members: Mapped[list["User"]] = relationship("User", foreign_keys="User.family_id", back_populates="family")
 
 
 class Invite(Base):
@@ -69,9 +86,12 @@ class Invite(Base):
     times_used: Mapped[int] = mapped_column(Integer, default=0)
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    family_id: Mapped[int | None] = mapped_column(ForeignKey("families.id"), nullable=True)
     note: Mapped[str | None] = mapped_column(String(200), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    family: Mapped["Family | None"] = relationship("Family")
 
 
 class DMSettings(Base):

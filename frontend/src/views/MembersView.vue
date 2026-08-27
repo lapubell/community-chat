@@ -4,6 +4,7 @@ import { useRouter } from "vue-router";
 import { storeToRefs } from "pinia";
 import { useAuthStore } from "@/stores/auth";
 import { useChatStore } from "@/stores/chat";
+import { useFamiliesStore } from "@/stores/families";
 import { api } from "@/api";
 import { toast } from "@/composables/useToasts";
 import Sidebar from "@/components/Sidebar.vue";
@@ -12,6 +13,7 @@ import Avatar from "@/components/Avatar.vue";
 const router = useRouter();
 const auth = useAuthStore();
 const chat = useChatStore();
+const families = useFamiliesStore();
 const { me, otherUsers } = storeToRefs(auth);
 const mobileSidebar = ref(false);
 
@@ -19,15 +21,21 @@ const showInvite = ref(false);
 const inviteCode = ref("");
 const inviteMaxUses = ref(1);
 const inviteNote = ref("");
+const inviteFamilyId = ref(null);
 const creatingInvite = ref(false);
 
 onMounted(async () => {
   await auth.loadUsers().catch(() => {});
+  await families.load().catch(() => {});
 });
 
 function timeStr(iso) {
   if (!iso) return "—";
   return new Date(iso).toLocaleDateString([], { month: "long", day: "numeric", year: "numeric" });
+}
+
+function familyBadge(u) {
+  return u.family_name || null;
 }
 
 async function createInvite() {
@@ -36,6 +44,7 @@ async function createInvite() {
     const invite = await api.post("/api/invites", {
       max_uses: inviteMaxUses.value,
       note: inviteNote.value.trim() || null,
+      family_id: inviteFamilyId.value || null,
     });
     inviteCode.value = invite.code;
     inviteNote.value = "";
@@ -86,6 +95,15 @@ async function copyLink() {
 
         <div class="invite-form">
           <label>
+            Invite into
+            <select v-model="inviteFamilyId" class="family-select">
+              <option :value="null">No family</option>
+              <option v-for="f in families.families" :key="f.id" :value="f.id">
+                {{ f.name }}
+              </option>
+            </select>
+          </label>
+          <label>
             Max uses
             <input v-model.number="inviteMaxUses" type="number" min="1" max="100" class="invite-num" />
           </label>
@@ -97,6 +115,11 @@ async function copyLink() {
             {{ creatingInvite ? "Creating…" : "Create invite" }}
           </button>
         </div>
+
+        <p v-if="families.families.length === 0" class="hint invite-families-hint">
+          No families yet.
+          <router-link to="/families">Create one</router-link> to group new members.
+        </p>
 
         <div v-if="inviteCode" class="invite-result">
           <div class="invite-code-row">
@@ -117,6 +140,7 @@ async function copyLink() {
           <div class="member-info">
             <div class="member-name">{{ me?.display_name }} <span class="you-tag">You</span></div>
             <div class="member-handle">@{{ me?.handle }}</div>
+            <span v-if="me?.family_name" class="family-badge">🏠 {{ me.family_name }}</span>
             <p v-if="me?.bio" class="member-bio">{{ me.bio }}</p>
             <div class="member-meta">
               <span v-if="me?.email">✉️ {{ me.email }}</span>
@@ -135,6 +159,7 @@ async function copyLink() {
           <div class="member-info">
             <div class="member-name">{{ u.display_name }}</div>
             <div class="member-handle">@{{ u.handle }}</div>
+            <span v-if="u.family_name" class="family-badge">🏠 {{ u.family_name }}</span>
             <p v-if="u.bio" class="member-bio">{{ u.bio }}</p>
             <div class="member-meta">
               <span v-if="u.email">✉️ {{ u.email }}</span>
@@ -196,6 +221,8 @@ async function copyLink() {
 }
 .invite-form label.flex1 { flex: 1; }
 .invite-num { width: 80px; }
+.family-select { width: 100%; min-width: 140px; }
+.invite-families-hint { margin-top: 4px; }
 .invite-result {
   display: flex;
   flex-direction: column;
@@ -257,6 +284,15 @@ async function copyLink() {
   margin-left: 6px;
 }
 .member-handle { font-size: 13px; color: var(--text-muted); }
+.family-badge {
+  display: inline-block;
+  background: var(--accent-soft);
+  color: var(--accent-hover);
+  font-size: 12px;
+  padding: 2px 10px;
+  border-radius: 10px;
+  margin-top: 6px;
+}
 .member-bio {
   margin-top: 8px;
   font-size: 14px;

@@ -1,7 +1,10 @@
-"""Idempotent database seeder.
+"""Idempotent database seeder + lightweight migrations.
 
 Creates the initial admin user on first boot so the app can be joined via
 invites only. Subsequent runs are no-ops (never overwrites an existing admin).
+
+Also runs a small set of forward-migrations for existing SQLite databases so
+new columns/tables are added without dropping data.
 
 Configuration (all optional, via environment):
   ADMIN_HANDLE   -- admin username, default "admin"
@@ -12,6 +15,8 @@ Configuration (all optional, via environment):
 import logging
 import secrets
 import string
+
+from sqlalchemy import inspect, text
 
 from .db import Base, SessionLocal, engine
 from .core.security import hash_password
@@ -26,9 +31,46 @@ def generate_password(length: int = 16) -> str:
     return "".join(secrets.choice(ALPHABET + string.ascii_lowercase) for _ in range(length))
 
 
+def _migrate_sqlite() -> None:
+    """Add any missing columns to existing tables (SQLite has no ALTER ADD IF
+    NOT EXISTS, so we inspect first). No-op on a fresh DB.
+    """
+    if not engine.url.drivername.startswith("sqlite"):
+        return
+    insp = inspect(engine)
+    existing_tables = set(insp.get_table_names())
+
+    db = SessionLocal()
+    try:
+        # users.family_id
+        if "users" in existing_tables:
+            cols = {c["name"] for c in insp.get_columns("users")}
+            if "family_id" not in cols:
+                # The families table already exists (create_all ran first), so the
+                # inline FK reference is safe.
+                db.execute(
+                    text("ALTER TABLE users ADD COLUMN family_id INTEGER REFERENCES families(id)")
+                )
+                logger.info("Migration: added users.family_id")
+        # invites.family_id
+        if "invites" in existing_tables:
+            cols = {c["name"] for c in insp.get_columns("invites")}
+            if "family_id" not in cols:
+                db.execute(
+                    text("ALTER TABLE invites ADD COLUMN family_id INTEGER REFERENCES families(id)")
+                )
+                logger.info("Migration: added invites.family_id")
+        db.commit()
+    finally:
+        db.close()
+
+
 def seed_admin() -> None:
-    """Create tables and the admin user if it doesn't already exist."""
+    """Create tables + run migrations + ensure the admin user exists."""
+    # create_all makes any missing tables (e.g. families) without touching
+    # existing ones, so it's safe to run before the column migration.
     Base.metadata.create_all(engine)
+    _migrate_sqlite()
 
     import os
 

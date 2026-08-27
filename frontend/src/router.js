@@ -22,6 +22,12 @@ const routes = [
     meta: { requiresAuth: true },
   },
   {
+    path: "/families",
+    name: "families",
+    component: () => import("@/views/FamiliesView.vue"),
+    meta: { requiresAuth: true },
+  },
+  {
     path: "/dm/:userId",
     name: "dm",
     component: () => import("@/views/DmView.vue"),

@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .db import create_all
 from .seed import seed_admin
-from .routers import auth, dms, files, invites, messages
+from .routers import auth, dms, families, files, invites, messages
 from .ws import hub, ws_endpoint
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -55,6 +55,7 @@ app.add_middleware(
 
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(invites.router, prefix="/api/invites", tags=["invites"])
+app.include_router(families.router, prefix="/api/families", tags=["families"])
 app.include_router(messages.router, prefix="/api/messages", tags=["messages"])
 app.include_router(dms.router, prefix="/api/dms", tags=["dms"])
 app.include_router(files.router, prefix="/api/files", tags=["files"])

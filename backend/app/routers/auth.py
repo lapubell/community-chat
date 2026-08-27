@@ -24,6 +24,8 @@ def public_user(user: User) -> dict:
         "phone": user.phone,
         "avatar_url": user.avatar_url,
         "bio": user.bio,
+        "family_id": user.family_id,
+        "family_name": user.family.name if user.family else None,
         "created_at": user.created_at.isoformat(),
     }
 
@@ -77,6 +79,7 @@ async def register(req: RegisterRequest, db=Depends(get_db)):
         phone=req.phone,
         is_active=True,
         password_hash=hash_password(req.password),
+        family_id=invite.family_id,
     )
     db.add(user)
     db.flush()
