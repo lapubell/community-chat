@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from .db import create_all
 from .seed import seed_admin
 from .routers import auth, dms, families, files, invites, messages
+from .routers.upload_utils import UPLOAD_DIR
 from .ws import hub, ws_endpoint
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -30,7 +31,6 @@ def _resolve_frontend_dir() -> Path:
 
 
 FRONTEND_DIR = _resolve_frontend_dir()
-UPLOAD_DIR = Path(os.environ.get("UPLOAD_DIR", Path(__file__).resolve().parent.parent / "uploads"))
 
 
 @asynccontextmanager

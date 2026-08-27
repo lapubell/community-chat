@@ -32,5 +32,13 @@ export const useFamiliesStore = defineStore("families", {
       await api.del(`/api/families/${id}`);
       this.families = this.families.filter((f) => f.id !== id);
     },
+    async uploadAvatar(id, file) {
+      const fd = new FormData();
+      fd.append("file", file);
+      const family = await api.upload(`/api/families/${id}/avatar`, fd);
+      const idx = this.families.findIndex((f) => f.id === id);
+      if (idx >= 0) this.families.splice(idx, 1, family);
+      return family;
+    },
   },
 });

@@ -38,6 +38,11 @@ function familyBadge(u) {
   return u.family_name || null;
 }
 
+function familyAvatar(u) {
+  const f = families.byId(u.family_id);
+  return f?.avatar_url || null;
+}
+
 async function createInvite() {
   creatingInvite.value = true;
   try {
@@ -140,7 +145,10 @@ async function copyLink() {
           <div class="member-info">
             <div class="member-name">{{ me?.display_name }} <span class="you-tag">You</span></div>
             <div class="member-handle">@{{ me?.handle }}</div>
-            <span v-if="me?.family_name" class="family-badge">🏠 {{ me.family_name }}</span>
+            <span v-if="me?.family_name" class="family-badge">
+              <img v-if="familyAvatar(me)" :src="familyAvatar(me)" class="badge-avatar" alt="" />
+              🏠 {{ me.family_name }}
+            </span>
             <p v-if="me?.bio" class="member-bio">{{ me.bio }}</p>
             <div class="member-meta">
               <span v-if="me?.email">✉️ {{ me.email }}</span>
@@ -159,7 +167,10 @@ async function copyLink() {
           <div class="member-info">
             <div class="member-name">{{ u.display_name }}</div>
             <div class="member-handle">@{{ u.handle }}</div>
-            <span v-if="u.family_name" class="family-badge">🏠 {{ u.family_name }}</span>
+            <span v-if="u.family_name" class="family-badge">
+              <img v-if="familyAvatar(u)" :src="familyAvatar(u)" class="badge-avatar" alt="" />
+              🏠 {{ u.family_name }}
+            </span>
             <p v-if="u.bio" class="member-bio">{{ u.bio }}</p>
             <div class="member-meta">
               <span v-if="u.email">✉️ {{ u.email }}</span>
@@ -285,13 +296,21 @@ async function copyLink() {
 }
 .member-handle { font-size: 13px; color: var(--text-muted); }
 .family-badge {
-  display: inline-block;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   background: var(--accent-soft);
   color: var(--accent-hover);
   font-size: 12px;
   padding: 2px 10px;
   border-radius: 10px;
   margin-top: 6px;
+}
+.badge-avatar {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  object-fit: cover;
 }
 .member-bio {
   margin-top: 8px;

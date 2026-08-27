@@ -60,6 +60,12 @@ def _migrate_sqlite() -> None:
                     text("ALTER TABLE invites ADD COLUMN family_id INTEGER REFERENCES families(id)")
                 )
                 logger.info("Migration: added invites.family_id")
+        # families.avatar_url
+        if "families" in existing_tables:
+            cols = {c["name"] for c in insp.get_columns("families")}
+            if "avatar_url" not in cols:
+                db.execute(text("ALTER TABLE families ADD COLUMN avatar_url TEXT"))
+                logger.info("Migration: added families.avatar_url")
         db.commit()
     finally:
         db.close()

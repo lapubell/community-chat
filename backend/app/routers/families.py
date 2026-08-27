@@ -1,10 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from ..db import get_db
 from ..models import Family, User
 from ..core.security import get_current_user
+from .upload_utils import delete_file, IMAGE_CONTENT_TYPES, public_url, save_upload
 
 router = APIRouter()
 
@@ -13,6 +14,7 @@ class FamilyOut(BaseModel):
     id: int
     name: str
     description: str | None
+    avatar_url: str | None
     member_count: int
     created_at: str
 
@@ -33,6 +35,7 @@ def serialize(db, family: Family) -> FamilyOut:
         id=family.id,
         name=family.name,
         description=family.description,
+        avatar_url=family.avatar_url,
         member_count=members,
         created_at=family.created_at.isoformat(),
     )
@@ -116,3 +119,32 @@ async def delete_family(
     db.delete(family)
     db.commit()
     return {"ok": True}
+
+
+@router.post("/{family_id}/avatar", response_model=FamilyOut)
+async def upload_family_avatar(
+    family_id: int,
+    file: UploadFile = File(...),
+    user: User = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    """Upload (or replace) the family's avatar image.
+
+    Any authenticated member may set it. Only one image is kept: the
+    previous file is deleted from disk so no revisions are retained.
+    """
+    family = db.get(Family, family_id)
+    if family is None:
+        raise HTTPException(status_code=404, detail="Family not found")
+
+    storage_name, _size = await save_upload(
+        file,
+        prefix=f"family{family_id}",
+        allowed_content_types=IMAGE_CONTENT_TYPES,
+    )
+    # Replace the existing avatar and remove its file (no revision history).
+    delete_file(family.avatar_url)
+    family.avatar_url = public_url(storage_name)
+    db.commit()
+    db.refresh(family)
+    return serialize(db, family)

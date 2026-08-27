@@ -122,6 +122,63 @@ def test_families_full_flow():
         r = c.delete(f"/api/families/{fam1['id']}", headers=auth_header(admin_token))
         assert r.status_code == 400
 
+        # --- Family avatar upload + replace ---
+        # Upload an avatar for Holsapples.
+        png_bytes = b"\x89PNG\r\n\x1a\n" + b"0" * 32
+        r = c.post(
+            f"/api/families/{fam1['id']}/avatar",
+            headers=auth_header(admin_token),
+            files={"file": ("family.png", png_bytes, "image/png")},
+        )
+        assert r.status_code == 200, r.text
+        avatar1 = r.json()
+        assert avatar1["avatar_url"] is not None
+        assert avatar1["avatar_url"].startswith("/uploads/")
+
+        # The avatar is visible in the family list.
+        r = c.get("/api/families", headers=auth_header(admin_token))
+        fam1_now = [f for f in r.json() if f["id"] == fam1["id"]][0]
+        assert fam1_now["avatar_url"] == avatar1["avatar_url"]
+
+        # The uploaded file is actually served.
+        r = c.get(avatar1["avatar_url"])
+        assert r.status_code == 200
+        assert r.content == png_bytes
+
+        # Replace it: the old file should be gone, the new one set.
+        r = c.post(
+            f"/api/families/{fam1['id']}/avatar",
+            headers=auth_header(admin_token),
+            files={"file": ("family2.png", png_bytes + b"X", "image/png")},
+        )
+        assert r.status_code == 200, r.text
+        avatar2 = r.json()
+        assert avatar2["avatar_url"] != avatar1["avatar_url"]
+
+        # Old file deleted (no revisions kept).
+        r = c.get(avatar1["avatar_url"])
+        assert r.status_code == 404
+        # New file served.
+        r = c.get(avatar2["avatar_url"])
+        assert r.status_code == 200
+        assert r.content == png_bytes + b"X"
+
+        # Non-image is rejected.
+        r = c.post(
+            f"/api/families/{fam1['id']}/avatar",
+            headers=auth_header(admin_token),
+            files={"file": ("evil.exe", b"MZ", "application/octet-stream")},
+        )
+        assert r.status_code == 415
+
+        # Avatar on a non-existent family.
+        r = c.post(
+            "/api/families/9999/avatar",
+            headers=auth_header(admin_token),
+            files={"file": ("x.png", png_bytes, "image/png")},
+        )
+        assert r.status_code == 404
+
         # Delete the empty family -> ok.
         r = c.delete(f"/api/families/{fam2['id']}", headers=auth_header(admin_token))
         assert r.status_code == 200
