@@ -5,14 +5,13 @@ import { onWsEvent, useAuthStore } from "./auth";
 export const useChatStore = defineStore("chat", {
   state: () => ({
     groupMessages: [],
-    dmConversations: [],
-    dmMessages: {},
-    typingPeer: null,
-    _typingTimer: null,
+    rooms: [],
+    roomMessages: {}, // roomId -> [message]
+    roomMeta: {}, // roomId -> { families: [...] }
     _wsUnsub: null,
   }),
   getters: {
-    unreadDmTotal: (s) => s.dmConversations.reduce((sum, c) => sum + c.unread_count, 0),
+    activeRooms: (s) => s.rooms.filter((r) => r.last_at),
   },
   actions: {
     initWs() {
@@ -31,16 +30,12 @@ export const useChatStore = defineStore("chat", {
           this._deleteGroupMessage(msg.message_id);
           break;
         case "dm.new":
-          this._addDmMessage(msg.message);
-          break;
-        case "dm.read":
-          this._markDmReadLocally(msg);
+          this._addRoomMessage(msg);
           break;
         case "reaction.changed":
           this._updateReaction(msg);
           break;
         case "typing":
-          if (msg.channel === "dm") this._setTypingPeer(msg.peer_id);
           break;
       }
     },
@@ -106,9 +101,9 @@ export const useChatStore = defineStore("chat", {
     },
     _updateReaction(msg) {
       let message = null;
-      if (msg.channel === "dm") {
-        for (const key in this.dmMessages) {
-          message = this.dmMessages[key].find((m) => m.id === msg.message_id);
+      if (msg.channel === "room") {
+        for (const key in this.roomMessages) {
+          message = this.roomMessages[key].find((m) => m.id === msg.message_id);
           if (message) break;
         }
       } else {
@@ -128,75 +123,74 @@ export const useChatStore = defineStore("chat", {
         message.reactions.push({ emoji: msg.emoji, user_ids: msg.user_ids, count: msg.count });
       }
     },
-    async loadDmConversations() {
-      this.dmConversations = await api.get("/api/dms/conversations");
+    async loadRooms() {
+      this.rooms = await api.get("/api/dms/rooms");
     },
-    async loadDmHistory(userId) {
-      const messages = await api.get(`/api/dms/with/${userId}`);
-      this.dmMessages[userId] = messages;
-      return messages;
+    async openRoom(familyId) {
+      const room = await api.post("/api/dms/rooms", { family_id: familyId });
+      this.roomMeta[room.id] = { families: room.families };
+      if (!this.rooms.some((r) => r.id === room.id)) {
+        this.rooms.unshift({
+          id: room.id,
+          families: room.families,
+          families_all: room.families,
+          last_message: null,
+          last_at: null,
+        });
+      }
+      return room;
     },
-    _addDmMessage(message) {
-      const peerId = message.sender.id === this._meId ? message.recipient_id : message.sender.id;
-      if (!this.dmMessages[peerId]) this.dmMessages[peerId] = [];
-      if (this.dmMessages[peerId].some((m) => m.id === message.id)) return;
-      this.dmMessages[peerId].push(message);
-      const convo = this.dmConversations.find((c) => c.peer.id === peerId);
-      if (convo) {
-        convo.last_message = message;
-        convo.last_at = message.created_at;
-        if (message.sender.id !== this._meId) convo.unread_count += 1;
-      } else {
-        this.loadDmConversations();
+    async loadRoomHistory(roomId) {
+      const data = await api.get(`/api/dms/rooms/${roomId}`);
+      this.roomMessages[roomId] = data.messages;
+      if (data.families) this.roomMeta[roomId] = { families: data.families };
+      return data.messages;
+    },
+    _addRoomMessage(msg) {
+      const message = msg.message;
+      const roomId = message.room_id;
+      if (!this.roomMessages[roomId]) this.roomMessages[roomId] = [];
+      if (this.roomMessages[roomId].some((m) => m.id === message.id)) return;
+      this.roomMessages[roomId].push(message);
+      const room = this.rooms.find((r) => r.id === roomId);
+      if (room) {
+        room.last_message = message;
+        room.last_at = message.created_at;
       }
     },
-    _markDmReadLocally(msg) {
-      const convo = this.dmConversations.find((c) => c.peer.id === msg.peer_id);
-      if (convo) {
-        const dmMsgs = this.dmMessages[msg.peer_id] || [];
-        for (const m of dmMsgs) if (m.id <= msg.up_to_id && m.sender.id === msg.peer_id) m.read_at = m.read_at || new Date().toISOString();
-        if (msg.peer_id === this._meId) convo.unread_count = 0;
-      }
-    },
-    async sendDmMessage(userId, { text, fileUrl, fileName, fileContentType }) {
-      const message = await api.post(`/api/dms/with/${userId}`, {
+    async sendRoomMessage(roomId, { text, fileUrl, fileName, fileContentType }) {
+      const message = await api.post(`/api/dms/rooms/${roomId}`, {
         text,
         file_url: fileUrl,
         file_name: fileName,
         file_content_type: fileContentType,
       });
-      if (!this.dmMessages[userId]) this.dmMessages[userId] = [];
-      this.dmMessages[userId].push(message);
-      const convo = this.dmConversations.find((c) => c.peer.id === userId);
-      if (convo) {
-        convo.last_message = message;
-        convo.last_at = message.created_at;
+      if (!this.roomMessages[roomId]) this.roomMessages[roomId] = [];
+      if (!this.roomMessages[roomId].some((m) => m.id === message.id)) {
+        this.roomMessages[roomId].push(message);
+      }
+      const room = this.rooms.find((r) => r.id === roomId);
+      if (room) {
+        room.last_message = message;
+        room.last_at = message.created_at;
       }
       return message;
     },
-    async markDmRead(userId, upToId) {
-      await api.post(`/api/dms/${upToId}/read`);
-      const convo = this.dmConversations.find((c) => c.peer.id === userId);
-      if (convo) convo.unread_count = 0;
-    },
-    async addDmReaction(messageId, emoji) {
-      const result = await api.post(`/api/dms/${messageId}/reactions/${encodeURIComponent(emoji)}`);
-      for (const key in this.dmMessages) {
-        const msg = this.dmMessages[key].find((m) => m.id === messageId);
-        if (msg) this._applyReaction(msg, result);
-      }
+    async addRoomReaction(roomId, messageId, emoji) {
+      const result = await api.post(`/api/dms/rooms/${roomId}/messages/${messageId}/reactions/${encodeURIComponent(emoji)}`);
+      const msgs = this.roomMessages[roomId] || [];
+      const msg = msgs.find((m) => m.id === messageId);
+      if (msg) this._applyReaction(msg, result);
       return result;
     },
-    _setTypingPeer(peerId) {
-      this.typingPeer = peerId;
-      clearTimeout(this._typingTimer);
-      this._typingTimer = setTimeout(() => (this.typingPeer = null), 3000);
-    },
-    sendTyping(channel, peerId) {
-      const auth = useAuthStore();
-      if (auth.ws?.readyState === WebSocket.OPEN) {
-        auth.ws.send(JSON.stringify({ type: "typing", channel, peer_id: peerId }));
+    async removeRoomReaction(roomId, messageId, emoji) {
+      const result = await api.del(`/api/dms/rooms/${roomId}/messages/${messageId}/reactions/${encodeURIComponent(emoji)}`);
+      const msgs = this.roomMessages[roomId] || [];
+      const msg = msgs.find((m) => m.id === messageId);
+      if (msg) {
+        msg.reactions = msg.reactions.filter((r) => r.emoji !== emoji);
       }
+      return result;
     },
     get _meId() {
       return useAuthStore().user?.id;

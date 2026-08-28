@@ -2,12 +2,14 @@
 from .db import (
     Base,
     DMSettings,
-    DirectMessage,
+    DmRoom,
+    DmRoomFamily,
     Family,
     File,
     GroupMessage,
     Invite,
     Reaction,
+    RoomMessage,
     User,
     get_db,
 )
@@ -15,12 +17,14 @@ from .db import (
 __all__ = [
     "Base",
     "DMSettings",
-    "DirectMessage",
+    "DmRoom",
+    "DmRoomFamily",
     "Family",
     "File",
     "GroupMessage",
     "Invite",
     "Reaction",
+    "RoomMessage",
     "User",
     "get_db",
 ]

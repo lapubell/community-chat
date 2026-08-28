@@ -28,9 +28,9 @@ const routes = [
     meta: { requiresAuth: true },
   },
   {
-    path: "/dm/:userId",
-    name: "dm",
-    component: () => import("@/views/DmView.vue"),
+    path: "/room/:roomId",
+    name: "room",
+    component: () => import("@/views/RoomView.vue"),
     meta: { requiresAuth: true },
   },
   {

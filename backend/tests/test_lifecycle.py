@@ -114,37 +114,86 @@ def test_full_lifecycle():
         assert r.status_code == 200
         assert r.json()["count"] == 1
 
-        # 6. DM: admin messages dave, dave reads it (read receipt).
-        dave_id = dave["user"]["id"]
+        # 6. Family rooms: put admin and dave in (different) families, open a
+        # shared room between them, and exchange messages.
+        r = c.post("/api/families", headers=auth_header(admin_token), json={"name": "Admins"})
+        assert r.status_code == 201
+        fam_admin = r.json()
+        r = c.post("/api/families", headers=auth_header(admin_token), json={"name": "Davids"})
+        assert r.status_code == 201
+        fam_dave = r.json()
+
+        # Assign each user to a family (admin API: use the families store by
+        # re-registering isn't possible, so assign via the DB through a helper
+        # endpoint is not exposed — instead, use the invite family path is
+        # already consumed. We assign via a direct DB update helper.)
+        from app.db import SessionLocal
+        from app.models import User
+
+        db = SessionLocal()
+        admin_row = db.query(User).filter(User.handle == "admin").first()
+        dave_row = db.query(User).filter(User.handle == "dave").first()
+        admin_row.family_id = fam_admin["id"]
+        dave_row.family_id = fam_dave["id"]
+        db.commit()
+        db.close()
+
+        # Admin opens the room between the two families.
         r = c.post(
-            f"/api/dms/with/{dave_id}",
+            "/api/dms/rooms",
+            headers=auth_header(admin_token),
+            json={"family_id": fam_dave["id"]},
+        )
+        assert r.status_code == 201, r.text
+        room = r.json()
+        room_id = room["id"]
+        fam_names = {f["name"] for f in room["families"]}
+        assert fam_names == {"Admins", "Davids"}
+
+        # Sending to the room works for a member; the message lands for both.
+        r = c.post(
+            f"/api/dms/rooms/{room_id}",
             headers=auth_header(admin_token),
             json={"text": "psst, hi dave"},
         )
         assert r.status_code == 201, r.text
-        dm = r.json()
-        assert dm["sender"]["handle"] == "admin"
-        assert dm["read_at"] is None
+        msg = r.json()
+        assert msg["sender"]["handle"] == "admin"
+        assert "read_at" not in msg  # no read receipts in rooms
 
-        # dave views the conversation -> message is marked read.
-        r = c.get("/api/dms/with/1", headers=auth_header(dave_token))
+        # Dave can read the room history.
+        r = c.get(f"/api/dms/rooms/{room_id}", headers=auth_header(dave_token))
         assert r.status_code == 200
         history = r.json()
-        assert len(history) == 1
-        # fetch again to confirm the read receipt persisted
-        r = c.get("/api/dms/with/1", headers=auth_header(dave_token))
-        assert r.json()[0]["read_at"] is not None
+        assert len(history["messages"]) == 1
+        assert history["messages"][0]["text"] == "psst, hi dave"
 
-        # 7. Admin's conversation list shows dave.
-        r = c.get("/api/dms/conversations", headers=auth_header(admin_token))
+        # Non-members cannot read or write the room.
+        # (A user with no family can't be a member.)
+        r = c.post(
+            "/api/invites", headers=auth_header(admin_token), json={"max_uses": 1, "note": "out"}
+        )
+        r = c.post(
+            "/api/auth/register",
+            json={"invite_code": r.json()["code"], "handle": "eve", "password": "evepass123"},
+        )
+        eve_token = r.json()["token"]
+        assert c.get(f"/api/dms/rooms/{room_id}", headers=auth_header(eve_token)).status_code == 403
+        assert c.post(
+            f"/api/dms/rooms/{room_id}", headers=auth_header(eve_token), json={"text": "hi"}
+        ).status_code == 403
+
+        # 7. Admin's room list shows the shared room.
+        r = c.get("/api/dms/rooms", headers=auth_header(admin_token))
         assert r.status_code == 200
-        convos = r.json()
-        assert any(cv["peer"]["handle"] == "dave" for cv in convos)
+        rooms = r.json()
+        assert any(rm["id"] == room_id for rm in rooms)
 
         # 8. WebSocket hello handshake for dave.
+        dave_id = dave["user"]["id"]
         with c.websocket_connect(f"/ws?token={dave_token}") as ws:
             hello = ws.receive_json()
             assert hello["type"] == "hello"
             assert hello["user_id"] == dave_id
 
-    print("LIFECYCLE OK: seed -> login -> invite -> join -> group chat -> DM -> ws")
+    print("LIFECYCLE OK: seed -> login -> invite -> join -> group chat -> family room -> ws")

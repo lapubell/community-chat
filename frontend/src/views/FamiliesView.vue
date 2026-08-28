@@ -1,16 +1,38 @@
 <script setup>
 import { computed, ref, onMounted } from "vue";
 import { storeToRefs } from "pinia";
+import { useRouter } from "vue-router";
 import { useFamiliesStore } from "@/stores/families";
 import { useAuthStore } from "@/stores/auth";
+import { useChatStore } from "@/stores/chat";
 import { toast } from "@/composables/useToasts";
 import Sidebar from "@/components/Sidebar.vue";
 
 const families = useFamiliesStore();
 const auth = useAuthStore();
+const chat = useChatStore();
+const router = useRouter();
 const { me } = storeToRefs(auth);
 const isAdmin = computed(() => !!me.value?.is_admin);
 const mobileSidebar = ref(false);
+const chattingFor = ref(null);
+
+async function chatWithFamily(f) {
+  if (me.value?.family_id == null) {
+    toast("You're not in a family yet", "error");
+    return;
+  }
+  chattingFor.value = f.id;
+  try {
+    const room = await chat.openRoom(f.id);
+    await chat.loadRoomHistory(room.id);
+    router.push({ name: "room", params: { roomId: room.id } });
+  } catch (e) {
+    toast(e.message, "error");
+  } finally {
+    chattingFor.value = null;
+  }
+}
 
 const newName = ref("");
 const newDesc = ref("");
@@ -168,9 +190,20 @@ async function remove(f) {
               <div v-if="f.description" class="family-desc">{{ f.description }}</div>
               <div class="family-meta">{{ f.member_count }} member{{ f.member_count === 1 ? "" : "s" }}</div>
             </div>
-            <div v-if="isAdmin" class="family-actions">
-              <button class="btn btn-ghost btn-sm" @click="startEdit(f)">Edit</button>
-              <button class="btn btn-ghost btn-sm danger-text" @click="remove(f)">Delete</button>
+            <div class="family-actions">
+              <button
+                v-if="f.id !== me?.family_id"
+                class="btn btn-sm"
+                :disabled="chattingFor === f.id"
+                @click="chatWithFamily(f)"
+              >
+                {{ chattingFor === f.id ? "Opening…" : "💬 Chat" }}
+              </button>
+              <button v-else class="btn btn-ghost btn-sm" disabled>Your family</button>
+              <template v-if="isAdmin">
+                <button class="btn btn-ghost btn-sm" @click="startEdit(f)">Edit</button>
+                <button class="btn btn-ghost btn-sm danger-text" @click="remove(f)">Delete</button>
+              </template>
             </div>
           </div>
         </div>

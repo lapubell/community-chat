@@ -6,16 +6,16 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, EmailStr, Field, field_validator
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete, func, select
 
 from ..db import SessionLocal, get_db
 from ..models import (
     DMSettings,
-    DirectMessage,
     File,
     GroupMessage,
     Invite,
     Reaction,
+    RoomMessage,
     User,
 )
 from ..core.security import create_access_token, get_current_user, hash_password, require_admin
@@ -166,21 +166,21 @@ async def admin_list_users(
             .group_by(GroupMessage.author_id)
         ).all()
     }
-    # DMs sent, per sender.
-    dm_sent = {
+    # Room messages sent, per sender.
+    room_sent = {
         r[0]: r[1]
         for r in db.execute(
-            select(DirectMessage.sender_id, func.count(DirectMessage.id))
-            .where(DirectMessage.sender_id.in_(uids))
-            .group_by(DirectMessage.sender_id)
+            select(RoomMessage.sender_id, func.count(RoomMessage.id))
+            .where(RoomMessage.sender_id.in_(uids))
+            .group_by(RoomMessage.sender_id)
         ).all()
     }
-    last_dm = {
+    last_room = {
         r[0]: r[1]
         for r in db.execute(
-            select(DirectMessage.sender_id, func.max(DirectMessage.created_at))
-            .where(DirectMessage.sender_id.in_(uids))
-            .group_by(DirectMessage.sender_id)
+            select(RoomMessage.sender_id, func.max(RoomMessage.created_at))
+            .where(RoomMessage.sender_id.in_(uids))
+            .group_by(RoomMessage.sender_id)
         ).all()
     }
 
@@ -189,11 +189,11 @@ async def admin_list_users(
         base = public_user(u)
         g_count, g_last = group_stats.get(u.id, (0, None))
         last_active = None
-        for ts in (g_last, last_dm.get(u.id)):
+        for ts in (g_last, last_room.get(u.id)):
             if ts is not None and (last_active is None or ts > last_active):
                 last_active = ts
         base["group_message_count"] = g_count
-        base["dm_sent_count"] = dm_sent.get(u.id, 0)
+        base["room_message_count"] = room_sent.get(u.id, 0)
         base["last_active_at"] = last_active.isoformat() if last_active else None
         out.append(base)
     return out
@@ -220,10 +220,8 @@ async def delete_user(
     uid = target.id
     # Reactions they cast.
     db.execute(delete(Reaction).where(Reaction.user_id == uid))
-    # DMs they sent or received.
-    db.execute(
-        delete(DirectMessage).where(or_(DirectMessage.sender_id == uid, DirectMessage.recipient_id == uid))
-    )
+    # Room messages they sent.
+    db.execute(delete(RoomMessage).where(RoomMessage.sender_id == uid))
     # Group messages they wrote. Clear any inbound replies first so other
     # users' messages don't point at rows we're about to remove.
     from .upload_utils import delete_file

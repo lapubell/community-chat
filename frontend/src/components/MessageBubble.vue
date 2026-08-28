@@ -99,6 +99,7 @@ function timeStr(iso) {
         :reactions="message.reactions"
         :message-id="message.id"
         :channel="channel"
+        :room-id="channel === 'room' ? message.room_id : null"
         :peer-id="peerId"
         :is-own="isOwn"
       />

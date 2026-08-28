@@ -1,6 +1,5 @@
 <script setup>
-import { ref, onMounted, watch } from "vue";
-import { useRouter } from "vue-router";
+import { ref, onMounted } from "vue";
 import { storeToRefs } from "pinia";
 import { useAuthStore } from "@/stores/auth";
 import { useChatStore } from "@/stores/chat";
@@ -10,7 +9,6 @@ import { toast } from "@/composables/useToasts";
 import Sidebar from "@/components/Sidebar.vue";
 import Avatar from "@/components/Avatar.vue";
 
-const router = useRouter();
 const auth = useAuthStore();
 const chat = useChatStore();
 const families = useFamiliesStore();
@@ -176,7 +174,7 @@ async function copyLink() {
               <th>Member</th>
               <th>Family</th>
               <th class="num">Group msgs</th>
-              <th class="num">DMs sent</th>
+              <th class="num">Room msgs</th>
               <th>Joined</th>
               <th>Last active</th>
               <th class="actions-col"></th>
@@ -202,14 +200,11 @@ async function copyLink() {
                 <span v-else class="muted">—</span>
               </td>
               <td class="num">{{ u.group_message_count ?? 0 }}</td>
-              <td class="num">{{ u.dm_sent_count ?? 0 }}</td>
+              <td class="num">{{ u.room_message_count ?? 0 }}</td>
               <td class="muted">{{ timeStr(u.created_at) }}</td>
               <td class="muted">{{ lastActiveStr(u.last_active_at) }}</td>
               <td class="actions-col">
                 <div class="row-actions">
-                  <button class="btn btn-ghost btn-sm" :disabled="u.id === me?.id" @click="router.push({ name: 'dm', params: { userId: u.id } })">
-                    Message
-                  </button>
                   <button
                     class="btn btn-ghost btn-sm danger-text"
                     :disabled="u.id === me?.id || deletingId === u.id"

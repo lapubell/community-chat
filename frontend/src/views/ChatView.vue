@@ -1,6 +1,5 @@
 <script setup>
-import { onMounted, onUnmounted, ref, watch, computed } from "vue";
-import { useRoute } from "vue-router";
+import { onMounted, onUnmounted, ref, computed } from "vue";
 import { storeToRefs } from "pinia";
 import { useAuthStore } from "@/stores/auth";
 import { useChatStore } from "@/stores/chat";
@@ -9,26 +8,17 @@ import MessageBubble from "@/components/MessageBubble.vue";
 import ComposeBox from "@/components/ComposeBox.vue";
 import { onWsEvent } from "@/stores/auth";
 
-const route = useRoute();
 const auth = useAuthStore();
 const chat = useChatStore();
-const { groupMessages, dmConversations, dmMessages, typingPeer } = storeToRefs(chat);
+const { groupMessages } = storeToRefs(chat);
 const { me, typingNames } = storeToRefs(auth);
 
 const scrollRef = ref(null);
 const mobileSidebar = ref(false);
 const loadingOlder = ref(false);
 let wsUnsub = null;
-let lastGroupLen = 0;
 
-const isDm = computed(() => route.name === "dm");
-const peerId = computed(() => (route.name === "dm" ? Number(route.params.userId) : null));
-const peer = computed(() => auth.users.find((u) => u.id === peerId.value));
-const dmMsgs = computed(() => (peerId.value ? dmMessages.value[peerId.value] || [] : []));
-const showTyping = computed(() => {
-  if (isDm.value) return typingPeer.value === peerId.value;
-  return typingNames.value.length > 0;
-});
+const showTyping = computed(() => typingNames.value.length > 0);
 
 function scrollToEnd(smooth = true) {
   requestAnimationFrame(() => {
@@ -54,7 +44,7 @@ async function loadOlder() {
 }
 
 function onScroll() {
-  if (scrollRef.value && scrollRef.value.scrollTop < 80 && !isDm.value) {
+  if (scrollRef.value && scrollRef.value.scrollTop < 80) {
     loadOlder();
   }
 }
@@ -67,29 +57,11 @@ function handleWs(msg) {
       scrollToEnd();
     }
   }
-  if (msg.type === "dm.new" && isDm.value && Number(route.params.userId) === msg.message.sender.id) {
-    scrollToEnd();
-  }
 }
-
-watch(
-  () => route.name,
-  async (name) => {
-    if (name === "dm") {
-      await chat.loadDmHistory(peerId.value);
-      scrollToEnd(false);
-    } else if (name === "chat") {
-      scrollToEnd(false);
-    }
-  },
-  { immediate: false }
-);
 
 onMounted(() => {
   wsUnsub = onWsEvent(handleWs);
-  if (route.name === "chat") {
-    requestAnimationFrame(() => scrollToEnd(false));
-  }
+  requestAnimationFrame(() => scrollToEnd(false));
 });
 
 onUnmounted(() => {
@@ -103,43 +75,27 @@ onUnmounted(() => {
 
     <section class="chat-main">
       <header class="chat-header">
-        <button v-if="true" class="mobile-toggle" @click="mobileSidebar = true">☰</button>
-        <template v-if="isDm">
-          <span class="header-title">
-            {{ peer?.display_name || "Direct message" }}
-          </span>
-          <span v-if="typingPeer === peerId" class="typing-indicator">typing…</span>
-        </template>
-        <template v-else>
-          <span class="header-title">Group Chat</span>
-          <span v-if="showTyping" class="typing-indicator">{{ typingNames.join(", ") }} typing…</span>
-        </template>
+        <button class="mobile-toggle" @click="mobileSidebar = true">☰</button>
+        <span class="header-title">Group Chat</span>
+        <span v-if="showTyping" class="typing-indicator">{{ typingNames.join(", ") }} typing…</span>
       </header>
 
       <div ref="scrollRef" class="messages" @scroll="onScroll">
-        <div v-if="!isDm && groupMessages.length === 0" class="empty-state">
+        <div v-if="groupMessages.length === 0" class="empty-state">
           <div class="empty-icon">💬</div>
           <h2>Welcome to Community Chat!</h2>
           <p>Say hi to everyone — this is where our little corner of the internet lives.</p>
         </div>
-        <template v-else>
-          <MessageBubble
-            v-for="msg in isDm ? dmMsgs : groupMessages"
-            :key="msg.id"
-            :message="msg"
-            :channel="isDm ? 'dm' : 'group'"
-            :peer-id="peerId"
-            :is-own="msg.author?.id === me?.id"
-          />
-        </template>
+        <MessageBubble
+          v-for="msg in groupMessages"
+          :key="msg.id"
+          :message="msg"
+          channel="group"
+          :is-own="msg.author?.id === me?.id"
+        />
       </div>
 
-      <ComposeBox
-        v-if="!isDm || peerId"
-        :channel="isDm ? 'dm' : 'group'"
-        :peer-id="peerId"
-        @send-typing="scrollToEnd"
-      />
+      <ComposeBox channel="group" @send-typing="scrollToEnd" />
     </section>
   </div>
 </template>

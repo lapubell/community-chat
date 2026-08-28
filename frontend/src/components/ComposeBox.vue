@@ -24,12 +24,13 @@ const fileInput = ref(null);
 let typingSentAt = 0;
 
 function onInput() {
-  if (text.value.length > 0) {
+  // Typing indicators only apply to the group chat; family rooms don't use
+  // them (noisy with multiple members).
+  if (text.value.length > 0 && props.channel === "group") {
     const now = Date.now();
     if (now - typingSentAt > 1500) {
       typingSentAt = now;
-      if (props.channel === "group") chat.sendTyping("group");
-      else if (props.peerId) chat.sendTyping("dm", props.peerId);
+      chat.sendTyping("group");
     }
   }
 }
@@ -68,7 +69,8 @@ async function submit() {
   if (props.channel === "group") {
     await chat.sendGroupMessage({ ...payload, replyToId: replyToId.value });
   } else {
-    await chat.sendDmMessage(props.peerId, payload);
+    // channel === "room": peerId is the room id.
+    await chat.sendRoomMessage(props.peerId, payload);
   }
   text.value = "";
   attachFile.value = null;

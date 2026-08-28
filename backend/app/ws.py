@@ -96,6 +96,21 @@ class Hub:
                     pass
         return delivered
 
+    async def send_to_many(
+        self, user_ids: set[int], payload: dict[str, Any], exclude: int | None = None
+    ) -> int:
+        """Send to every online user in ``user_ids`` (optionally excluding one).
+
+        Returns the number of users reached.
+        """
+        reached = 0
+        for user_id in user_ids:
+            if user_id == exclude:
+                continue
+            if await self.send_to(user_id, payload):
+                reached += 1
+        return reached
+
     async def _send(self, ws: WebSocket, payload: dict[str, Any]) -> None:
         try:
             await ws.send_text(json.dumps(payload, ensure_ascii=False))
@@ -146,18 +161,6 @@ async def ws_endpoint(ws: WebSocket, token: str = ""):
                     {"type": "typing", "channel": "group", "peer_id": user.id},
                     exclude=user.id,
                 )
-            elif msg_type == "typing" and data.get("channel") == "dm":
-                peer_id = data.get("peer_id")
-                if isinstance(peer_id, int):
-                    await hub.send_to(peer_id, {"type": "typing", "channel": "dm", "peer_id": user.id})
-            elif msg_type == "read" and data.get("channel") == "dm":
-                peer_id = data.get("peer_id")
-                up_to_id = data.get("up_to_id")
-                if isinstance(peer_id, int) and isinstance(up_to_id, int):
-                    await hub.send_to(
-                        peer_id,
-                        {"type": "dm.read", "channel": "dm", "peer_id": user.id, "up_to_id": up_to_id},
-                    )
     except WebSocketDisconnect as exc:
         logger.info("ws client disconnect: user=%s code=%s reason=%r", user.id, exc.code, exc.reason)
     except Exception as exc:

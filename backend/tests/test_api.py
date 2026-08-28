@@ -194,34 +194,71 @@ def test_group_messages_crud():
     assert all(m["id"] != msg["id"] for m in r.json())
 
 
-def test_dm_conversation_and_read_receipts():
+def _assign_family(c, handle, family_id):
+    """Test helper: assign a user to a family directly in the DB."""
+    from app.db import SessionLocal
+    from app.models import User
+
+    db = SessionLocal()
+    u = db.query(User).filter(User.handle == handle).first()
+    u.family_id = family_id
+    db.commit()
+    db.close()
+
+
+def test_family_room_dm():
     c = client()
-    t1, _ = make_user(c, "heidi", as_admin=True)
-    t2, u2 = make_user(c, "ivan", invite=_next_invite(c, t1))
-    ivan_id = u2["id"]
+    admin, _ = make_user(c, "heidi", as_admin=True)
+    t2, u2 = make_user(c, "ivan", invite=_next_invite(c, admin))
 
-    r = c.post("/api/dms/with/%d" % ivan_id, headers=auth(t1), json={"text": "hey"})
+    # Two families, one per user.
+    r = c.post("/api/families", headers=auth(admin), json={"name": "Heidis"})
     assert r.status_code == 201
-    dm = r.json()
-    assert dm["sender"]["handle"] == "heidi"
-    assert dm["read_at"] is None
+    fam_heidi = r.json()["id"]
+    r = c.post("/api/families", headers=auth(admin), json={"name": "Ivans"})
+    assert r.status_code == 201
+    fam_ivan = r.json()["id"]
+    _assign_family(c, "heidi", fam_heidi)
+    _assign_family(c, "ivan", fam_ivan)
 
-    # ivan (recipient) fetches history; his unread message is marked read
-    r = c.get("/api/dms/with/%d" % 1, headers=auth(t2))
+    # Admin opens the room between the two families.
+    r = c.post("/api/dms/rooms", headers=auth(admin), json={"family_id": fam_ivan})
+    assert r.status_code == 201, r.text
+    room_id = r.json()["id"]
+
+    # Sending a room message works and has no read receipt field.
+    r = c.post("/api/dms/rooms/%d" % room_id, headers=auth(admin), json={"text": "hey"})
+    assert r.status_code == 201
+    msg = r.json()
+    assert msg["sender"]["handle"] == "heidi"
+    assert "read_at" not in msg
+
+    # Ivan reads the room history.
+    r = c.get("/api/dms/rooms/%d" % room_id, headers=auth(t2))
     assert r.status_code == 200
-    items = r.json()
-    assert len(items) == 1
+    history = r.json()
+    assert len(history["messages"]) == 1
+    assert history["messages"][0]["text"] == "hey"
 
-    # fetch again to confirm read receipt was persisted
-    r = c.get("/api/dms/with/%d" % 1, headers=auth(t2))
-    assert r.json()[0]["read_at"] is not None
-
-    # heidi sees one conversation with ivan
-    r = c.get("/api/dms/conversations", headers=auth(t1))
+    # Reaction on a room message.
+    r = c.post(
+        "/api/dms/rooms/%d/messages/%d/reactions/\U0001F44D" % (room_id, msg["id"]),
+        headers=auth(t2),
+    )
     assert r.status_code == 200
-    convos = r.json()
-    assert len(convos) == 1
-    assert convos[0]["peer"]["handle"] == "ivan"
+    assert r.json()["count"] == 1
+
+    # A user with no family cannot access the room.
+    t3, _ = make_user(c, "zoe", invite=_next_invite(c, admin))
+    assert c.get("/api/dms/rooms/%d" % room_id, headers=auth(t3)).status_code == 403
+    assert c.post(
+        "/api/dms/rooms/%d" % room_id, headers=auth(t3), json={"text": "nope"}
+    ).status_code == 403
+
+    # Admin's room list shows the room.
+    r = c.get("/api/dms/rooms", headers=auth(admin))
+    assert r.status_code == 200
+    assert any(rm["id"] == room_id for rm in r.json())
 
 
 def test_admin_user_stats_and_delete():
@@ -231,11 +268,25 @@ def test_admin_user_stats_and_delete():
     bob, ubob = make_user(c, "bob", invite=_next_invite(c, admin))
     carl, ucarl = make_user(c, "carl", invite=_next_invite(c, admin))
 
-    # Bob sends 2 group messages and 1 DM to Carl; Carl replies once in the DM.
+    # Give bob and carl families and open a room between them.
+    r = c.post("/api/families", headers=auth(admin), json={"name": "Bobs"})
+    assert r.status_code == 201
+    fam_bob = r.json()["id"]
+    r = c.post("/api/families", headers=auth(admin), json={"name": "Carls"})
+    assert r.status_code == 201
+    fam_carl = r.json()["id"]
+    _assign_family(c, "bob", fam_bob)
+    _assign_family(c, "carl", fam_carl)
+
+    r = c.post("/api/dms/rooms", headers=auth(bob), json={"family_id": fam_carl})
+    assert r.status_code == 201
+    room_id = r.json()["id"]
+
+    # Bob sends 2 group messages and 1 room message; Carl sends 1 room message.
     assert c.post("/api/messages", headers=auth(bob), json={"text": "b1"}).status_code == 201
     assert c.post("/api/messages", headers=auth(bob), json={"text": "b2"}).status_code == 201
-    assert c.post("/api/dms/with/%d" % ucarl["id"], headers=auth(bob), json={"text": "dm from bob"}).status_code == 201
-    assert c.post("/api/dms/with/%d" % ubob["id"], headers=auth(carl), json={"text": "dm from carl"}).status_code == 201
+    assert c.post("/api/dms/rooms/%d" % room_id, headers=auth(bob), json={"text": "room from bob"}).status_code == 201
+    assert c.post("/api/dms/rooms/%d" % room_id, headers=auth(carl), json={"text": "room from carl"}).status_code == 201
 
     # Non-admins cannot see the stats endpoint or delete users.
     assert c.get("/api/auth/admin/users", headers=auth(bob)).status_code == 403
@@ -246,10 +297,10 @@ def test_admin_user_stats_and_delete():
     assert r.status_code == 200
     by_handle = {u["handle"]: u for u in r.json()}
     assert by_handle["bob"]["group_message_count"] == 2
-    assert by_handle["bob"]["dm_sent_count"] == 1
+    assert by_handle["bob"]["room_message_count"] == 1
     assert by_handle["bob"]["last_active_at"] is not None
     assert by_handle["carl"]["group_message_count"] == 0
-    assert by_handle["carl"]["dm_sent_count"] == 1
+    assert by_handle["carl"]["room_message_count"] == 1
 
     # Admin cannot delete themselves.
     root_id = None
@@ -266,11 +317,12 @@ def test_admin_user_stats_and_delete():
     assert "carl" not in handles
     assert "bob" in handles
 
-    # Bob's DM conversation with Carl is gone (Carl was deleted).
-    r = c.get("/api/dms/conversations", headers=auth(bob))
+    # Carl's room messages are gone, but bob's remain (room is intact).
+    r = c.get("/api/dms/rooms/%d" % room_id, headers=auth(bob))
     assert r.status_code == 200
-    peers = {cv["peer"]["handle"] for cv in r.json()}
-    assert "carl" not in peers
+    room_texts = [m["text"] for m in r.json()["messages"]]
+    assert "room from bob" in room_texts
+    assert "room from carl" not in room_texts
 
     # Group messages Bob sent are intact (Bob was not deleted).
     r = c.get("/api/messages", headers=auth(bob))

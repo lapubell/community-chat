@@ -49,9 +49,13 @@ function handleWsMessage(event, msg) {
     notify("Group message", `${msg.message.author.display_name}: ${text}`, "/");
   }
   if (msg.type === "dm.new") {
-    const text = msg.message.text || "sent an attachment";
-    notify(`DM from ${msg.message.sender.display_name}`, text, `/dm/${msg.message.sender.id}`);
-    chat.loadDmConversations();
+    const sender = msg.message.sender;
+    if (sender.id !== auth.user.id) {
+      const text = msg.message.text || "sent an attachment";
+      notify(`Family room`, `${sender.display_name}: ${text}`, `/room/${msg.message.room_id}`);
+    }
+    // Refresh the sidebar room list (last message / ordering).
+    chat.loadRooms().catch(() => {});
   }
 }
 
@@ -65,7 +69,7 @@ onMounted(async () => {
     await auth.loadUsers().catch(() => {});
     auth.connectWs();
     await chat.loadGroupMessages().catch(() => {});
-    await chat.loadDmConversations().catch(() => {});
+    await chat.loadRooms().catch(() => {});
     requestNotifPermission();
   }
 });

@@ -15,17 +15,25 @@ const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
 const chat = useChatStore();
-const { dmConversations } = storeToRefs(chat);
+const { rooms } = storeToRefs(chat);
 const { me } = storeToRefs(auth);
 const isAdmin = computed(() => !!me.value?.is_admin);
+
+function roomLabel(room) {
+  // Show the other family(ies) in the room (excluding the user's own family).
+  const others = (room.families || []).filter((f) => f.id !== me.value?.family_id);
+  if (!others.length) return "Family room";
+  return others.map((f) => f.name).join(" · ");
+}
 
 function isNavActive(name) {
   return route.name === name;
 }
 
-function go(name, userId) {
+function go(name, id) {
   emit("close");
-  if (name === "dm" && userId) router.push({ name: "dm", params: { userId } });
+  if (name === "room" && id) router.push({ name: "room", params: { roomId: id } });
+  else if (name === "dm" && id) router.push({ name: "room", params: { roomId: id } });
   else router.push({ name });
 }
 
@@ -65,25 +73,23 @@ watch(
     </nav>
 
     <div class="dms-section">
-      <div class="dms-header">Direct Messages</div>
+      <div class="dms-header">Family Rooms</div>
       <button
-        v-for="c in dmConversations"
-        :key="c.peer.id"
+        v-for="room in rooms"
+        :key="room.id"
         class="dm-item"
-        :class="{ active: isNavActive('dm') && Number(route.params.userId) === c.peer.id }"
-        @click="go('dm', c.peer.id)"
+        :class="{ active: isNavActive('room') && Number(route.params.roomId) === room.id }"
+        @click="go('room', room.id)"
       >
-        <Avatar :user="c.peer" />
+        <span class="room-avatar">{{ roomLabel(room) === "Family room" ? "💬" : "🏠" }}</span>
         <div class="dm-info">
-          <div class="dm-name">{{ c.peer.display_name }}</div>
-          <div class="dm-preview">{{ c.last_message?.text || "No messages yet" }}</div>
+          <div class="dm-name">{{ roomLabel(room) }}</div>
+          <div class="dm-preview">{{ room.last_message?.text || "No messages yet" }}</div>
         </div>
-        <span v-if="c.unread_count > 0" class="badge">{{ c.unread_count }}</span>
       </button>
-      <div v-if="dmConversations.length === 0" class="dms-empty">
-        No conversations yet.
-        <router-link v-if="isAdmin" to="/members">Message someone →</router-link>
-        <span v-else>Start a DM from the member list.</span>
+      <div v-if="rooms.length === 0" class="dms-empty">
+        No rooms yet.
+        <router-link to="/families">Chat with a family →</router-link>
       </div>
     </div>
   </aside>
@@ -147,6 +153,17 @@ watch(
 }
 .dm-item:hover { background: var(--bg-hover); }
 .dm-item.active { background: var(--accent-soft); }
+.room-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  background: var(--bg-hover);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  flex-shrink: 0;
+}
 .dm-info { flex: 1; min-width: 0; }
 .dm-name { font-weight: 500; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dm-preview {

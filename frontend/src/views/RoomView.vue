@@ -8,21 +8,27 @@ import { onWsEvent } from "@/stores/auth";
 import Sidebar from "@/components/Sidebar.vue";
 import MessageBubble from "@/components/MessageBubble.vue";
 import ComposeBox from "@/components/ComposeBox.vue";
-import Avatar from "@/components/Avatar.vue";
 
 const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
 const chat = useChatStore();
 const { me } = storeToRefs(auth);
-const { dmMessages, typingPeer } = storeToRefs(chat);
+const { roomMessages } = storeToRefs(chat);
 
 const scrollRef = ref(null);
 const mobileSidebar = ref(false);
 
-const peerId = computed(() => Number(route.params.userId));
-const peer = computed(() => auth.users.find((u) => u.id === peerId.value));
-const messages = computed(() => dmMessages.value[peerId.value] || []);
+const roomId = computed(() => Number(route.params.roomId));
+const messages = computed(() => roomMessages.value[roomId.value] || []);
+
+const metaFamilies = computed(() => {
+  const room = chat.rooms.find((r) => r.id === roomId.value);
+  if (room?.families) return room.families;
+  return chat.roomMeta[roomId.value]?.families || [];
+});
+
+const myFamilyId = me.value?.family_id;
 
 function scrollToEnd(smooth = true) {
   requestAnimationFrame(() => {
@@ -32,33 +38,22 @@ function scrollToEnd(smooth = true) {
   });
 }
 
-async function markRead() {
-  const msgs = messages.value.filter((m) => m.sender.id === peerId.value && !m.read_at);
-  if (msgs.length) {
-    const last = msgs[msgs.length - 1];
-    await chat.markDmRead(peerId.value, last.id);
-    for (const m of msgs) m.read_at = new Date().toISOString();
-  }
+function isOwn(m) {
+  return m.sender?.id === me.value?.id;
 }
 
 function handleWs(msg) {
-  if (msg.type === "dm.new" && Number(route.params.userId) === msg.message.sender.id) {
+  if (msg.type === "dm.new" && msg.message.room_id === roomId.value) {
     scrollToEnd();
-    markRead();
-  }
-  if (msg.type === "dm.read" && msg.peer_id === peerId.value) {
-    const msgs = messages.value.filter((m) => m.sender.id === me.value?.id);
-    for (const m of msgs) if (m.id <= msg.up_to_id) m.read_at = m.read_at || new Date().toISOString();
   }
 }
 
 watch(
-  () => route.params.userId,
+  () => route.params.roomId,
   async (id) => {
     if (id) {
-      await chat.loadDmHistory(Number(id));
+      await chat.loadRoomHistory(Number(id));
       scrollToEnd(false);
-      markRead();
     }
   },
   { immediate: true }
@@ -74,41 +69,46 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="dm-layout">
+  <div class="room-layout">
     <Sidebar :mobile-open="mobileSidebar" @close="mobileSidebar = false" />
 
-    <section class="dm-main">
-      <header class="dm-header">
+    <section class="room-main">
+      <header class="room-header">
         <button class="mobile-toggle" @click="mobileSidebar = true">☰</button>
-        <button class="back-btn" @click="router.push('/')">←</button>
-        <Avatar :user="peer" />
-        <div class="dm-header-info">
-          <div class="dm-name">{{ peer?.display_name || "Direct message" }}</div>
-          <div class="dm-handle">@{{ peer?.handle }}</div>
+        <button class="back-btn" @click="router.push('/families')">←</button>
+        <div class="room-families">
+          <div
+            v-for="f in metaFamilies"
+            :key="f.id"
+            class="room-family-chip"
+            :class="{ self: f.id === myFamilyId }"
+          >
+            <img v-if="f.avatar_url" :src="f.avatar_url" class="chip-avatar" :alt="f.name" />
+            <span v-else class="chip-avatar placeholder">🏠</span>
+            <span class="chip-name">{{ f.name }}</span>
+          </div>
         </div>
-        <span v-if="typingPeer === peerId" class="typing-indicator">typing…</span>
       </header>
 
-      <div ref="scrollRef" class="dm-messages">
+      <div ref="scrollRef" class="room-messages">
         <div v-if="messages.length === 0" class="empty-state">
-          <div class="empty-icon">✉️</div>
+          <div class="empty-icon">💬</div>
           <h2>No messages yet</h2>
-          <p>Start the conversation with {{ peer?.display_name }}!</p>
+          <p>Start the conversation with your family members!</p>
         </div>
         <MessageBubble
           v-for="msg in messages"
           :key="msg.id"
           :message="msg"
-          channel="dm"
-          :peer-id="peerId"
-          :is-own="msg.sender.id === me?.id"
+          channel="room"
+          :is-own="isOwn(msg)"
         />
       </div>
 
       <ComposeBox
-        v-if="peerId"
-        channel="dm"
-        :peer-id="peerId"
+        v-if="roomId"
+        channel="room"
+        :peer-id="roomId"
         @send-typing="scrollToEnd"
       />
     </section>
@@ -116,18 +116,18 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.dm-layout {
+.room-layout {
   flex: 1;
   display: flex;
   overflow: hidden;
 }
-.dm-main {
+.room-main {
   flex: 1;
   display: flex;
   flex-direction: column;
   min-width: 0;
 }
-.dm-header {
+.room-header {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -141,12 +141,29 @@ onUnmounted(() => {
   padding: 4px 8px;
 }
 .back-btn:hover { color: var(--text); }
-.dm-header-info { flex: 1; min-width: 0; }
-.dm-name { font-weight: 600; }
-.dm-handle { font-size: 12px; color: var(--text-muted); }
-.typing-indicator { color: var(--accent-hover); font-size: 13px; font-style: italic; }
-.mobile-toggle { display: none; }
-.dm-messages {
+.room-families { display: flex; gap: 8px; flex-wrap: wrap; }
+.room-family-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 12px;
+  background: var(--bg-hover);
+  font-size: 13px;
+  font-weight: 500;
+}
+.room-family-chip.self { background: var(--accent-soft); color: var(--accent-hover); }
+.chip-avatar {
+  width: 20px;
+  height: 20px;
+  border-radius: 5px;
+  object-fit: cover;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.chip-avatar.placeholder { background: var(--bg); font-size: 12px; }
+.room-messages {
   flex: 1;
   overflow-y: auto;
   padding: 20px 16px;
@@ -164,6 +181,7 @@ onUnmounted(() => {
 }
 .empty-icon { font-size: 56px; margin-bottom: 16px; }
 .empty-state h2 { color: var(--text); margin-bottom: 8px; }
+.mobile-toggle { display: none; }
 
 @media (max-width: 768px) {
   .mobile-toggle { display: inline-block; font-size: 18px; color: var(--text); }

@@ -7,8 +7,14 @@ const props = defineProps({
   reactions: { type: Array, default: () => [] },
   messageId: Number,
   channel: { type: String, default: "group" },
+  roomId: { type: Number, default: null },
   isOwn: { type: Boolean, default: false },
 });
+
+// Channels where a reaction can be added/removed (group + family rooms).
+function canReact() {
+  return props.channel === "group" || props.channel === "room";
+}
 
 const auth = useAuthStore();
 const chat = useChatStore();
@@ -33,23 +39,31 @@ function hasReacted(emoji) {
   return r ? r.user_ids.includes(auth.user?.id) : false;
 }
 
+function _apply(emoji) {
+  if (props.channel === "room") {
+    if (hasReacted(emoji)) chat.removeRoomReaction(props.roomId, props.messageId, emoji);
+    else chat.addRoomReaction(props.roomId, props.messageId, emoji);
+  } else if (props.channel === "group") {
+    if (hasReacted(emoji)) chat.removeReaction(props.messageId, emoji);
+    else chat.addReaction(props.messageId, emoji);
+  }
+}
+
 function toggleWho(emoji, event) {
-  // Only allow adding/removing (not the who-popup) on group messages, and
-  // never let a user react to their own message — so on own messages the
-  // pill just toggles the "who reacted" popup.
-  if (props.channel !== "group" || props.isOwn) {
+  // Never let a user react to their own message — on own messages the pill
+  // just opens the "who reacted" popup. Otherwise (group/room, not own),
+  // clicking toggles the reaction.
+  if (props.isOwn || !canReact()) {
     whoOpen.value = whoOpen.value === emoji ? null : emoji;
     return;
   }
   whoOpen.value = null;
-  if (hasReacted(emoji)) chat.removeReaction(props.messageId, emoji);
-  else chat.addReaction(props.messageId, emoji);
+  _apply(emoji);
 }
 
 function pick(emoji) {
   pickerOpen.value = false;
-  if (hasReacted(emoji)) chat.removeReaction(props.messageId, emoji);
-  else chat.addReaction(props.messageId, emoji);
+  _apply(emoji);
 }
 </script>
 
@@ -71,7 +85,7 @@ function pick(emoji) {
         </span>
       </button>
       <button
-        v-if="!isOwn"
+        v-if="!isOwn && canReact()"
         class="reaction-add"
         @click.stop="whoOpen = null; pickerOpen = !pickerOpen"
         title="Add reaction"
@@ -79,7 +93,7 @@ function pick(emoji) {
         😊+
       </button>
     </div>
-    <div v-if="pickerOpen && channel === 'group' && !isOwn" class="picker" @click.stop>
+    <div v-if="pickerOpen && canReact() && !isOwn" class="picker" @click.stop>
       <button v-for="e in EMOJIS" :key="e" class="picker-emoji" @click="pick(e)">{{ e }}</button>
     </div>
   </div>

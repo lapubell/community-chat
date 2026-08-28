@@ -84,6 +84,26 @@ def _migrate_sqlite() -> None:
                     text("ALTER TABLE users ADD COLUMN joined_via_invite_id INTEGER REFERENCES invites(id)")
                 )
                 logger.info("Migration: added users.joined_via_invite_id")
+        # reactions: swap the old user-to-user dm_message_id for room_message_id.
+        # This is a clean break from member-to-member DMs to family rooms; old
+        # dm reaction rows are orphaned and dropped.
+        if "reactions" in existing_tables:
+            cols = {c["name"] for c in insp.get_columns("reactions")}
+            if "room_message_id" not in cols:
+                db.execute(
+                    text("ALTER TABLE reactions ADD COLUMN room_message_id INTEGER REFERENCES room_messages(id)")
+                )
+                logger.info("Migration: added reactions.room_message_id")
+            if "dm_message_id" in cols:
+                db.execute(
+                    text("DELETE FROM reactions WHERE dm_message_id IS NOT NULL")
+                )
+                # SQLite drops a column by rebuilding the table (3.35+).
+                try:
+                    db.execute(text("ALTER TABLE reactions DROP COLUMN dm_message_id"))
+                    logger.info("Migration: dropped reactions.dm_message_id")
+                except Exception:
+                    logger.warning("Migration: could not drop reactions.dm_message_id (kept)")
         db.commit()
     finally:
         db.close()

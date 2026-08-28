@@ -80,6 +80,9 @@ class Family(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     members: Mapped[list["User"]] = relationship("User", foreign_keys="User.family_id", back_populates="family")
+    rooms: Mapped[list["DmRoom"]] = relationship(
+        "DmRoom", secondary="dm_room_families", back_populates="families"
+    )
 
 
 class Invite(Base):
@@ -142,38 +145,68 @@ class GroupMessage(Base):
     reply_to: Mapped["GroupMessage | None"] = relationship("GroupMessage", remote_side=[id], foreign_keys=[reply_to_id])
 
 
-class DirectMessage(Base):
-    __tablename__ = "direct_messages"
-    __table_args__ = (
-        UniqueConstraint("sender_id", "recipient_id", "id", name="unique_dm"),
-    )
+class DmRoom(Base):
+    """A private chat shared between two or more families. Members of any
+    family attached to the room can read and write messages in it."""
+    __tablename__ = "dm_rooms"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    families: Mapped[list["Family"]] = relationship(
+        "Family",
+        secondary="dm_room_families",
+        back_populates="rooms",
+    )
+    messages: Mapped[list["RoomMessage"]] = relationship(
+        "RoomMessage", back_populates="room", cascade="all, delete-orphan"
+    )
+
+
+class DmRoomFamily(Base):
+    """Pivot: which families belong to a room."""
+    __tablename__ = "dm_room_families"
+    __table_args__ = (
+        UniqueConstraint("room_id", "family_id", name="unique_room_family"),
+    )
+
+    room_id: Mapped[int] = mapped_column(
+        ForeignKey("dm_rooms.id", ondelete="CASCADE"), primary_key=True
+    )
+    family_id: Mapped[int] = mapped_column(
+        ForeignKey("families.id", ondelete="CASCADE"), primary_key=True
+    )
+
+
+class RoomMessage(Base):
+    __tablename__ = "room_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    room_id: Mapped[int] = mapped_column(ForeignKey("dm_rooms.id"), nullable=False)
     sender_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
-    recipient_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     text: Mapped[str | None] = mapped_column(Text, nullable=True)
     file_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
     file_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     file_content_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    room: Mapped["DmRoom"] = relationship("DmRoom", back_populates="messages")
     sender: Mapped["User"] = relationship("User", foreign_keys=[sender_id])
-    recipient: Mapped["User"] = relationship("User", foreign_keys=[recipient_id])
 
 
 class Reaction(Base):
     __tablename__ = "reactions"
     __table_args__ = (
         UniqueConstraint("emoji", "group_message_id", "user_id", name="unique_reaction_group"),
-        UniqueConstraint("emoji", "dm_message_id", "user_id", name="unique_reaction_dm"),
+        UniqueConstraint("emoji", "room_message_id", "user_id", name="unique_reaction_room"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     emoji: Mapped[str] = mapped_column(String(32), nullable=False)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     group_message_id: Mapped[int | None] = mapped_column(ForeignKey("group_messages.id"), nullable=True)
-    dm_message_id: Mapped[int | None] = mapped_column(ForeignKey("direct_messages.id"), nullable=True)
+    room_message_id: Mapped[int | None] = mapped_column(ForeignKey("room_messages.id"), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     user: Mapped["User"] = relationship("User")
