@@ -224,6 +224,64 @@ def test_dm_conversation_and_read_receipts():
     assert convos[0]["peer"]["handle"] == "ivan"
 
 
+def test_admin_user_stats_and_delete():
+    c = client()
+    admin, _ = make_user(c, "root", as_admin=True)
+    # Two regular members, each with some content.
+    bob, ubob = make_user(c, "bob", invite=_next_invite(c, admin))
+    carl, ucarl = make_user(c, "carl", invite=_next_invite(c, admin))
+
+    # Bob sends 2 group messages and 1 DM to Carl; Carl replies once in the DM.
+    assert c.post("/api/messages", headers=auth(bob), json={"text": "b1"}).status_code == 201
+    assert c.post("/api/messages", headers=auth(bob), json={"text": "b2"}).status_code == 201
+    assert c.post("/api/dms/with/%d" % ucarl["id"], headers=auth(bob), json={"text": "dm from bob"}).status_code == 201
+    assert c.post("/api/dms/with/%d" % ubob["id"], headers=auth(carl), json={"text": "dm from carl"}).status_code == 201
+
+    # Non-admins cannot see the stats endpoint or delete users.
+    assert c.get("/api/auth/admin/users", headers=auth(bob)).status_code == 403
+    assert c.delete("/api/auth/users/%d" % ucarl["id"], headers=auth(bob)).status_code == 403
+
+    # Admin sees stats reflecting activity.
+    r = c.get("/api/auth/admin/users", headers=auth(admin))
+    assert r.status_code == 200
+    by_handle = {u["handle"]: u for u in r.json()}
+    assert by_handle["bob"]["group_message_count"] == 2
+    assert by_handle["bob"]["dm_sent_count"] == 1
+    assert by_handle["bob"]["last_active_at"] is not None
+    assert by_handle["carl"]["group_message_count"] == 0
+    assert by_handle["carl"]["dm_sent_count"] == 1
+
+    # Admin cannot delete themselves.
+    root_id = None
+    r = c.get("/api/auth/me", headers=auth(admin))
+    root_id = r.json()["id"]
+    assert c.delete("/api/auth/users/%d" % root_id, headers=auth(admin)).status_code == 400
+
+    # Admin hard-deletes Carl: his DMs (both directions), group msgs, etc. go away.
+    assert c.delete("/api/auth/users/%d" % ucarl["id"], headers=auth(admin)).status_code == 200
+
+    # Carl is gone from the member list.
+    r = c.get("/api/auth/admin/users", headers=auth(admin))
+    handles = {u["handle"] for u in r.json()}
+    assert "carl" not in handles
+    assert "bob" in handles
+
+    # Bob's DM conversation with Carl is gone (Carl was deleted).
+    r = c.get("/api/dms/conversations", headers=auth(bob))
+    assert r.status_code == 200
+    peers = {cv["peer"]["handle"] for cv in r.json()}
+    assert "carl" not in peers
+
+    # Group messages Bob sent are intact (Bob was not deleted).
+    r = c.get("/api/messages", headers=auth(bob))
+    texts = [m["text"] for m in r.json()]
+    assert "b1" in texts and "b2" in texts
+
+    # Carl's account no longer logs in.
+    r = c.post("/api/auth/login", json={"handle": "carl", "password": "secret123"})
+    assert r.status_code == 401
+
+
 def test_file_upload():
     c = client()
     t1, _ = make_user(c, "judy")

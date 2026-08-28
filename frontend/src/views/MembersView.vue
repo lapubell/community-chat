@@ -24,14 +24,28 @@ const inviteNote = ref("");
 const inviteFamilyId = ref(null);
 const creatingInvite = ref(false);
 
+const members = ref([]);
+const deletingId = ref(null);
+
 onMounted(async () => {
-  await auth.loadUsers().catch(() => {});
+  await loadMembers();
   await families.load().catch(() => {});
 });
+
+async function loadMembers() {
+  try {
+    members.value = await api.get("/api/auth/admin/users");
+  } catch {}
+}
 
 function timeStr(iso) {
   if (!iso) return "—";
   return new Date(iso).toLocaleDateString([], { month: "long", day: "numeric", year: "numeric" });
+}
+
+function lastActiveStr(iso) {
+  if (!iso) return "—";
+  return new Date(iso).toLocaleString([], { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
 function familyBadge(u) {
@@ -41,6 +55,22 @@ function familyBadge(u) {
 function familyAvatar(u) {
   const f = families.byId(u.family_id);
   return f?.avatar_url || null;
+}
+
+async function deleteMember(u) {
+  if (deletingId.value) return;
+  const msg = `Delete ${u.display_name}? This removes their messages, DMs, and files permanently.`;
+  if (!confirm(msg)) return;
+  deletingId.value = u.id;
+  try {
+    await api.del(`/api/auth/users/${u.id}`);
+    members.value = members.value.filter((m) => m.id !== u.id);
+    toast(`${u.display_name} deleted`, "success");
+  } catch (e) {
+    toast(e.message, "error");
+  } finally {
+    deletingId.value = null;
+  }
 }
 
 async function createInvite() {
@@ -139,49 +169,60 @@ async function copyLink() {
         </div>
       </div>
 
-      <div class="member-list">
-        <div class="member-card card">
-          <Avatar :user="me" size="lg" />
-          <div class="member-info">
-            <div class="member-name">{{ me?.display_name }} <span class="you-tag">You</span></div>
-            <div class="member-handle">@{{ me?.handle }}</div>
-            <span v-if="me?.family_name" class="family-badge">
-              <img v-if="familyAvatar(me)" :src="familyAvatar(me)" class="badge-avatar" alt="" />
-              🏠 {{ me.family_name }}
-            </span>
-            <p v-if="me?.bio" class="member-bio">{{ me.bio }}</p>
-            <div class="member-meta">
-              <span v-if="me?.email">✉️ {{ me.email }}</span>
-              <span v-if="me?.phone">📞 {{ me.phone }}</span>
-              <span>📅 Joined {{ timeStr(me?.created_at) }}</span>
-            </div>
-          </div>
-        </div>
-
-        <div
-          v-for="u in otherUsers"
-          :key="u.id"
-          class="member-card card"
-        >
-          <Avatar :user="u" size="lg" />
-          <div class="member-info">
-            <div class="member-name">{{ u.display_name }}</div>
-            <div class="member-handle">@{{ u.handle }}</div>
-            <span v-if="u.family_name" class="family-badge">
-              <img v-if="familyAvatar(u)" :src="familyAvatar(u)" class="badge-avatar" alt="" />
-              🏠 {{ u.family_name }}
-            </span>
-            <p v-if="u.bio" class="member-bio">{{ u.bio }}</p>
-            <div class="member-meta">
-              <span v-if="u.email">✉️ {{ u.email }}</span>
-              <span v-if="u.phone">📞 {{ u.phone }}</span>
-              <span>📅 Joined {{ timeStr(u.created_at) }}</span>
-            </div>
-          </div>
-          <button class="btn msg-btn" @click="router.push({ name: 'dm', params: { userId: u.id } })">
-            Message
-          </button>
-        </div>
+      <div class="member-table-wrap card">
+        <table class="member-table">
+          <thead>
+            <tr>
+              <th>Member</th>
+              <th>Family</th>
+              <th class="num">Group msgs</th>
+              <th class="num">DMs sent</th>
+              <th>Joined</th>
+              <th>Last active</th>
+              <th class="actions-col"></th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="u in members" :key="u.id" :class="{ self: u.id === me?.id }">
+              <td class="member-cell">
+                <Avatar :user="u" size="sm" />
+                <div class="member-cell-info">
+                  <div class="member-name">
+                    {{ u.display_name }}
+                    <span v-if="u.id === me?.id" class="you-tag">You</span>
+                  </div>
+                  <div class="member-handle">@{{ u.handle }}</div>
+                </div>
+              </td>
+              <td>
+                <span v-if="familyBadge(u)" class="family-badge">
+                  <img v-if="familyAvatar(u)" :src="familyAvatar(u)" class="badge-avatar" alt="" />
+                  {{ familyBadge(u) }}
+                </span>
+                <span v-else class="muted">—</span>
+              </td>
+              <td class="num">{{ u.group_message_count ?? 0 }}</td>
+              <td class="num">{{ u.dm_sent_count ?? 0 }}</td>
+              <td class="muted">{{ timeStr(u.created_at) }}</td>
+              <td class="muted">{{ lastActiveStr(u.last_active_at) }}</td>
+              <td class="actions-col">
+                <div class="row-actions">
+                  <button class="btn btn-ghost btn-sm" :disabled="u.id === me?.id" @click="router.push({ name: 'dm', params: { userId: u.id } })">
+                    Message
+                  </button>
+                  <button
+                    class="btn btn-ghost btn-sm danger-text"
+                    :disabled="u.id === me?.id || deletingId === u.id"
+                    @click="deleteMember(u)"
+                  >
+                    {{ deletingId === u.id ? "Deleting…" : "Delete" }}
+                  </button>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <div v-if="members.length === 0" class="invites-empty">No members yet.</div>
       </div>
     </section>
   </div>
@@ -272,29 +313,50 @@ async function copyLink() {
   padding: 6px 10px;
   border-radius: 6px;
 }
-.member-list {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  max-width: 640px;
+.member-table-wrap {
+  padding: 0;
+  overflow-x: auto;
+  max-width: none;
 }
-.member-card {
-  display: flex;
-  gap: 16px;
-  align-items: flex-start;
-  padding: 16px;
+.member-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  min-width: 720px;
 }
-.member-info { flex: 1; min-width: 0; }
-.member-name { font-weight: 600; font-size: 16px; }
-.you-tag {
-  background: var(--accent-soft);
-  color: var(--accent-hover);
+.member-table thead th {
+  text-align: left;
   font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 8px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.member-table th.num, .member-table td.num { text-align: right; }
+.member-table th.actions-col { text-align: right; }
+.member-table tbody td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.member-table tbody tr:last-child td { border-bottom: none; }
+.member-table tbody tr.self { background: var(--accent-soft); }
+.member-table td.muted { color: var(--text-muted); white-space: nowrap; }
+.member-cell { display: flex; align-items: center; gap: 10px; min-width: 180px; }
+.member-cell-info { min-width: 0; }
+.member-name { font-weight: 600; font-size: 14px; display: flex; align-items: center; }
+.you-tag {
+  background: var(--accent);
+  color: #fff;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 6px;
   margin-left: 6px;
 }
-.member-handle { font-size: 13px; color: var(--text-muted); }
+.member-handle { font-size: 12px; color: var(--text-muted); }
 .family-badge {
   display: inline-flex;
   align-items: center;
@@ -304,33 +366,12 @@ async function copyLink() {
   font-size: 12px;
   padding: 2px 10px;
   border-radius: 10px;
-  margin-top: 6px;
+  white-space: nowrap;
 }
-.badge-avatar {
-  width: 16px;
-  height: 16px;
-  border-radius: 4px;
-  object-fit: cover;
-}
-.member-bio {
-  margin-top: 8px;
-  font-size: 14px;
-  color: var(--text);
-  white-space: pre-wrap;
-}
-.member-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin-top: 10px;
-  font-size: 13px;
-  color: var(--text-muted);
-}
-.msg-btn { align-self: center; }
+.badge-avatar { width: 16px; height: 16px; border-radius: 4px; object-fit: cover; }
+.row-actions { display: flex; gap: 6px; justify-content: flex-end; }
 
 @media (max-width: 768px) {
   .mobile-toggle { display: inline-block; font-size: 18px; color: var(--text); }
-  .member-card { flex-wrap: wrap; }
-  .msg-btn { width: 100%; }
 }
 </style>

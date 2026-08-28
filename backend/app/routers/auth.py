@@ -6,11 +6,19 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, EmailStr, Field, field_validator
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, or_, select
 
 from ..db import SessionLocal, get_db
-from ..models import DMSettings, Invite, User
-from ..core.security import create_access_token, get_current_user, hash_password
+from ..models import (
+    DMSettings,
+    DirectMessage,
+    File,
+    GroupMessage,
+    Invite,
+    Reaction,
+    User,
+)
+from ..core.security import create_access_token, get_current_user, hash_password, require_admin
 
 router = APIRouter()
 
@@ -129,6 +137,122 @@ async def get_user(user_id: int, user: User = Depends(get_current_user), db=Depe
     if target is None:
         raise HTTPException(status_code=404, detail="User not found")
     return public_user(target)
+
+
+@router.get("/admin/users")
+async def admin_list_users(
+    user: User = Depends(require_admin), db=Depends(get_db)
+):
+    """Admin view of members with activity stats, for managing the roster."""
+    rows = (
+        db.execute(select(User).where(User.is_active == True).order_by(User.display_name))
+        .scalars()
+        .all()
+    )
+    if not rows:
+        return []
+
+    uids = [u.id for u in rows]
+    # Group-message counts and last activity, per author.
+    group_stats = {
+        r[0]: (r[1], r[2])
+        for r in db.execute(
+            select(
+                GroupMessage.author_id,
+                func.count(GroupMessage.id),
+                func.max(GroupMessage.created_at),
+            )
+            .where(GroupMessage.author_id.in_(uids))
+            .group_by(GroupMessage.author_id)
+        ).all()
+    }
+    # DMs sent, per sender.
+    dm_sent = {
+        r[0]: r[1]
+        for r in db.execute(
+            select(DirectMessage.sender_id, func.count(DirectMessage.id))
+            .where(DirectMessage.sender_id.in_(uids))
+            .group_by(DirectMessage.sender_id)
+        ).all()
+    }
+    last_dm = {
+        r[0]: r[1]
+        for r in db.execute(
+            select(DirectMessage.sender_id, func.max(DirectMessage.created_at))
+            .where(DirectMessage.sender_id.in_(uids))
+            .group_by(DirectMessage.sender_id)
+        ).all()
+    }
+
+    out = []
+    for u in rows:
+        base = public_user(u)
+        g_count, g_last = group_stats.get(u.id, (0, None))
+        last_active = None
+        for ts in (g_last, last_dm.get(u.id)):
+            if ts is not None and (last_active is None or ts > last_active):
+                last_active = ts
+        base["group_message_count"] = g_count
+        base["dm_sent_count"] = dm_sent.get(u.id, 0)
+        base["last_active_at"] = last_active.isoformat() if last_active else None
+        out.append(base)
+    return out
+
+
+@router.delete("/users/{user_id}")
+async def delete_user(
+    user_id: int,
+    user: User = Depends(require_admin),
+    db=Depends(get_db),
+):
+    """Admin hard-deletes a member and their content.
+
+    Removes their group messages, DMs (sent or received), reactions, and
+    uploaded files, then the user row. Orphaned reply_to links and invites
+    are cleared so nothing dangles. The admin cannot delete themselves.
+    """
+    target = db.get(User, user_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user_id == user.id:
+        raise HTTPException(status_code=400, detail="You cannot delete your own account")
+
+    uid = target.id
+    # Reactions they cast.
+    db.execute(delete(Reaction).where(Reaction.user_id == uid))
+    # DMs they sent or received.
+    db.execute(
+        delete(DirectMessage).where(or_(DirectMessage.sender_id == uid, DirectMessage.recipient_id == uid))
+    )
+    # Group messages they wrote. Clear any inbound replies first so other
+    # users' messages don't point at rows we're about to remove.
+    from .upload_utils import delete_file
+
+    their_msg_ids = [
+        r[0]
+        for r in db.execute(select(GroupMessage.id).where(GroupMessage.author_id == uid)).all()
+    ]
+    if their_msg_ids:
+        for other in db.execute(
+            select(GroupMessage).where(GroupMessage.reply_to_id.in_(their_msg_ids))
+        ).scalars().all():
+            other.reply_to_id = None
+        db.execute(delete(GroupMessage).where(GroupMessage.author_id == uid))
+    # Files they uploaded.
+    files = db.execute(select(File).where(File.owner_id == uid)).scalars().all()
+
+    for f in files:
+        delete_file(f"/uploads/{f.storage_name}")
+        db.delete(f)
+    # DM settings.
+    db.execute(delete(DMSettings).where(DMSettings.user_id == uid))
+    # Clear invite links that point at them (keep the invites themselves).
+    for inv in db.execute(select(Invite).where(Invite.created_by == uid)).scalars().all():
+        inv.created_by = None
+    # The user row.
+    db.delete(target)
+    db.commit()
+    return {"ok": True}
 
 
 class ProfileUpdate(BaseModel):
