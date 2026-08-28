@@ -18,13 +18,15 @@ async function request(path, options = {}) {
     options.body = JSON.stringify(options.body);
   }
   const res = await fetch(BASE + path, { ...options, headers });
-  if (res.status === 401) {
+  // 401 = not authenticated, 403 = authenticated but not allowed, 405 =
+  // method not allowed (a symptom of a stale/broken response, e.g. an old
+  // cached SPA hitting the API). All three mean the current session is
+  // invalid or the request can't proceed — drop it and let the SPA redirect
+  // to login via the router (a full-page reload would fight the router).
+  if (res.status === 401 || res.status === 403 || res.status === 405) {
     setToken(null);
-    // Let the SPA handle the redirect (a full-page reload here would fight
-    // the router and surface as a jarring error). Dispatch an event that a
-    // listener uses to navigate to /login via the router.
     window.dispatchEvent(new CustomEvent("auth:unauthorized"));
-    throw new Error("Unauthorized");
+    throw new Error(res.status === 401 ? "Unauthorized" : "Session expired");
   }
   if (!res.ok) {
     let detail = res.statusText;

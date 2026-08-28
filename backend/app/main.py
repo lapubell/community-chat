@@ -3,10 +3,10 @@ import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, WebSocket, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .db import create_all
@@ -81,8 +81,29 @@ async def serve_upload(filename: str):
     return FileResponse(path)
 
 
+class ImmutableFiles(StaticFiles):
+    """StaticFiles that serves hashed build assets with a long, immutable
+    cache. Vite emits content-hashed filenames (e.g. index-<hash>.js), so a
+    URL never changes — safe to cache forever."""
+
+    def file_response(self, *args, **kwargs) -> Response:  # type: ignore[override]
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return response
+
+
+# Headers for the app shell (index.html). It must never be cached: it is the
+# one file that references the hashed bundles, so serving a stale copy would
+# pin the user to an old JS/CSS build. `no-cache` forces a revalidation.
+_SHELL_CACHE_HEADERS = {"Cache-Control": "no-cache, no-store, must-revalidate"}
+
+
+def _shell_response() -> FileResponse:
+    return FileResponse(FRONTEND_DIR / "index.html", headers=_SHELL_CACHE_HEADERS)
+
+
 if FRONTEND_DIR.exists():
-    app.mount("/assets", StaticFiles(directory=FRONTEND_DIR / "assets"), name="assets")
+    app.mount("/assets", ImmutableFiles(directory=FRONTEND_DIR / "assets"), name="assets")
 
     @app.get("/{full_path:path}")
     async def spa_fallback(full_path: str):
@@ -92,5 +113,10 @@ if FRONTEND_DIR.exists():
         if full_path:
             candidate = (FRONTEND_DIR / full_path).resolve()
             if FRONTEND_DIR.resolve() in candidate.parents and candidate.is_file():
-                return FileResponse(candidate)
-        return FileResponse(index)
+                # Static files the SPA references directly (e.g. manifest,
+                # icons) — cacheable, but not forever.
+                return FileResponse(
+                    candidate,
+                    headers={"Cache-Control": "public, max-age=3600"},
+                )
+        return _shell_response()
