@@ -4,7 +4,7 @@ from sqlalchemy import select
 
 from ..db import get_db
 from ..models import Family, User
-from ..core.security import get_current_user
+from ..core.security import get_current_user, require_admin
 from .upload_utils import delete_file, IMAGE_CONTENT_TYPES, public_url, save_upload
 
 router = APIRouter()
@@ -52,7 +52,7 @@ async def list_families(
 @router.post("", response_model=FamilyOut, status_code=201)
 async def create_family(
     req: FamilyCreateRequest,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_admin),
     db=Depends(get_db),
 ):
     name = req.name.strip()
@@ -71,7 +71,7 @@ async def create_family(
 async def update_family(
     family_id: int,
     req: FamilyUpdateRequest,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_admin),
     db=Depends(get_db),
 ):
     family = db.get(Family, family_id)
@@ -96,7 +96,7 @@ async def update_family(
 @router.delete("/{family_id}")
 async def delete_family(
     family_id: int,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_admin),
     db=Depends(get_db),
 ):
     family = db.get(Family, family_id)

@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from ..db import SessionLocal, get_db
 from ..models import Family, Invite, User
-from ..core.security import get_current_user
+from ..core.security import get_current_user, require_admin
 
 router = APIRouter()
 
@@ -59,13 +59,22 @@ def serialize(invite: Invite, db) -> InviteOut:
 
 @router.get("", response_model=list[InviteOut])
 async def list_invites(user: User = Depends(get_current_user), db=Depends(get_db)):
-    rows = db.execute(select(Invite).order_by(Invite.created_at.desc())).scalars().all()
+    if user.is_admin:
+        rows = db.execute(select(Invite).order_by(Invite.created_at.desc())).scalars().all()
+    else:
+        # Non-admins only see the invite that brought them in.
+        rows = [
+            db.get(Invite, user.joined_via_invite_id)
+            if user.joined_via_invite_id is not None
+            else None
+        ]
+        rows = [r for r in rows if r is not None]
     return [serialize(r, db) for r in rows]
 
 
 @router.post("", response_model=InviteOut, status_code=201)
 async def create_invite(
-    req: InviteCreateRequest, user: User = Depends(get_current_user), db=Depends(get_db)
+    req: InviteCreateRequest, user: User = Depends(require_admin), db=Depends(get_db)
 ):
     # If a family was specified, it must exist.
     family_id = None
@@ -99,7 +108,7 @@ async def create_invite(
 
 @router.delete("/{invite_id}")
 async def revoke_invite(
-    invite_id: int, user: User = Depends(get_current_user), db=Depends(get_db)
+    invite_id: int, user: User = Depends(require_admin), db=Depends(get_db)
 ):
     invite = db.get(Invite, invite_id)
     if invite is None:

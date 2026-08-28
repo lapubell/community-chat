@@ -19,7 +19,7 @@ const routes = [
     path: "/members",
     name: "members",
     component: () => import("@/views/MembersView.vue"),
-    meta: { requiresAuth: true },
+    meta: { requiresAuth: true, requiresAdmin: true },
   },
   {
     path: "/families",
@@ -57,6 +57,9 @@ router.beforeEach((to) => {
   const auth = useAuthStore();
   if (to.meta.requiresAuth && !auth.isAuthenticated) {
     return { name: "login" };
+  }
+  if (to.meta.requiresAdmin && !auth.user?.is_admin) {
+    return { name: "chat" };
   }
   if (to.name === "login" && auth.isAuthenticated) {
     return auth.user ? { name: "chat" } : { name: "profile" };

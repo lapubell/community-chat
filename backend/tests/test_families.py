@@ -188,3 +188,95 @@ def test_families_full_flow():
         assert all(f["id"] != fam2["id"] for f in r.json())
 
     print("FAMILIES OK")
+
+
+def test_admin_gating():
+    """Non-admins cannot create/edit/delete families or create/revoke invites;
+    they can still list families, set a family avatar, and see only their own
+    join-invite."""
+    Base.metadata.drop_all(engine)
+    Base.metadata.create_all(engine)
+
+    with TestClient(app) as c:
+        r = c.post("/api/auth/login", json={"handle": "admin", "password": "adminpass123"})
+        admin_token = r.json()["token"]
+
+        # Admin creates a family + an invite for a second user.
+        r = c.post("/api/families", headers=auth_header(admin_token), json={"name": "Holsapples"})
+        assert r.status_code == 201
+        fam = r.json()
+        r = c.post(
+            "/api/invites",
+            headers=auth_header(admin_token),
+            json={"max_uses": 3, "family_id": fam["id"], "note": "for the family"},
+        )
+        assert r.status_code == 201
+        invite = r.json()
+
+        # A non-admin joins via that invite.
+        r = c.post(
+            "/api/auth/register",
+            json={
+                "invite_code": invite["code"],
+                "handle": "alice",
+                "password": "alice123",
+                "display_name": "Alice",
+            },
+        )
+        assert r.status_code == 200
+        alice = r.json()["user"]
+        alice_token = r.json()["token"]
+        assert alice["is_admin"] is False
+
+        # Admin is flagged as admin.
+        r = c.get("/api/auth/me", headers=auth_header(admin_token))
+        assert r.json()["is_admin"] is True
+
+        # Non-admin is blocked from creating a family.
+        r = c.post("/api/families", headers=auth_header(alice_token), json={"name": "Secret"})
+        assert r.status_code == 403
+
+        # Non-admin is blocked from editing a family.
+        r = c.put(f"/api/families/{fam['id']}", headers=auth_header(alice_token), json={"name": "X"})
+        assert r.status_code == 403
+
+        # Non-admin is blocked from deleting a family.
+        r = c.delete(f"/api/families/{fam['id']}", headers=auth_header(alice_token))
+        assert r.status_code == 403
+
+        # Non-admin is blocked from creating an invite.
+        r = c.post("/api/invites", headers=auth_header(alice_token), json={"max_uses": 1})
+        assert r.status_code == 403
+
+        # Non-admin is blocked from revoking an invite.
+        r = c.delete(f"/api/invites/{invite['id']}", headers=auth_header(alice_token))
+        assert r.status_code == 403
+
+        # Non-admin CAN list families (read-only).
+        r = c.get("/api/families", headers=auth_header(alice_token))
+        assert r.status_code == 200
+        assert any(f["id"] == fam["id"] for f in r.json())
+
+        # Non-admin CAN set a family avatar (members may update it).
+        png_bytes = b"\x89PNG\r\n\x1a\n" + b"0" * 32
+        r = c.post(
+            f"/api/families/{fam['id']}/avatar",
+            headers=auth_header(alice_token),
+            files={"file": ("fam.png", png_bytes, "image/png")},
+        )
+        assert r.status_code == 200
+
+        # Non-admin sees ONLY their own join-invite (not the admin's full list).
+        r = c.get("/api/invites", headers=auth_header(alice_token))
+        assert r.status_code == 200
+        listing = r.json()
+        assert len(listing) == 1
+        assert listing[0]["code"] == invite["code"]
+        assert listing[0]["family_name"] == "Holsapples"
+
+        # Admin still sees all invites.
+        r = c.get("/api/invites", headers=auth_header(admin_token))
+        assert r.status_code == 200
+        assert any(i["code"] == invite["code"] for i in r.json())
+
+    print("ADMIN GATING OK")

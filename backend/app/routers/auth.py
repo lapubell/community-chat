@@ -26,6 +26,7 @@ def public_user(user: User) -> dict:
         "bio": user.bio,
         "family_id": user.family_id,
         "family_name": user.family.name if user.family else None,
+        "is_admin": bool(user.is_admin),
         "created_at": user.created_at.isoformat(),
     }
 
@@ -80,6 +81,7 @@ async def register(req: RegisterRequest, db=Depends(get_db)):
         is_active=True,
         password_hash=hash_password(req.password),
         family_id=invite.family_id,
+        joined_via_invite_id=invite.id,
     )
     db.add(user)
     db.flush()

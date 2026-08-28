@@ -13,6 +13,7 @@ Configuration (all optional, via environment):
   ADMIN_NAME     -- admin display name, default "Admin"
 """
 import logging
+import os
 import secrets
 import string
 
@@ -66,6 +67,23 @@ def _migrate_sqlite() -> None:
             if "avatar_url" not in cols:
                 db.execute(text("ALTER TABLE families ADD COLUMN avatar_url TEXT"))
                 logger.info("Migration: added families.avatar_url")
+        # users.is_admin
+        if "users" in existing_tables:
+            cols = {c["name"] for c in insp.get_columns("users")}
+            if "is_admin" not in cols:
+                db.execute(text("ALTER TABLE users ADD COLUMN is_admin BOOLEAN NOT NULL DEFAULT 0"))
+                # Backfill: the seeded admin (by handle) becomes the admin.
+                admin_handle = os.environ.get("ADMIN_HANDLE", "admin").strip().lower()
+                db.execute(
+                    text("UPDATE users SET is_admin = 1 WHERE lower(handle) = :h"),
+                    {"h": admin_handle},
+                )
+                logger.info("Migration: added users.is_admin (backfilled admin '%s')", admin_handle)
+            if "joined_via_invite_id" not in cols:
+                db.execute(
+                    text("ALTER TABLE users ADD COLUMN joined_via_invite_id INTEGER REFERENCES invites(id)")
+                )
+                logger.info("Migration: added users.joined_via_invite_id")
         db.commit()
     finally:
         db.close()
@@ -100,6 +118,7 @@ def seed_admin() -> None:
             password_hash=hash_password(password),
             display_name=display_name,
             is_active=True,
+            is_admin=True,
         )
         db.add(admin)
         db.commit()

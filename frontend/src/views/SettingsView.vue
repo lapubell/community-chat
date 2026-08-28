@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from "vue";
+import { computed, ref, onMounted } from "vue";
 import { storeToRefs } from "pinia";
 import { useAuthStore } from "@/stores/auth";
 import { useFamiliesStore } from "@/stores/families";
@@ -11,6 +11,8 @@ import Avatar from "@/components/Avatar.vue";
 const auth = useAuthStore();
 const families = useFamiliesStore();
 const { me } = storeToRefs(auth);
+const isAdmin = computed(() => !!me.value?.is_admin);
+const myInvite = computed(() => invites.value[0] || null);
 const mobileSidebar = ref(false);
 
 const displayName = ref("");
@@ -149,6 +151,11 @@ async function copyInvite(code) {
   toast("Copied to clipboard", "success");
 }
 
+async function copyLink(code) {
+  await navigator.clipboard.writeText(inviteLink(code));
+  toast("Link copied to clipboard", "success");
+}
+
 async function revokeInvite(invite) {
   if (!confirm(`Revoke invite ${invite.code}?`)) return;
   await api.del(`/api/invites/${invite.id}`);
@@ -231,56 +238,90 @@ function inviteLink(code) {
         </div>
 
         <div class="card settings-card">
-          <h2>Invite friends</h2>
-          <p class="hint">
-            Share an invite code with a family member or friend so they can join.
-            Pick a family to add them to, or leave it as "No family".
-            Manage families under <router-link to="/families">Families</router-link>.
-          </p>
-          <div class="invite-create">
-            <div class="invite-row">
-              <label class="invite-label">
-                Family
-                <select v-model="inviteFamilyId" class="family-select">
-                  <option :value="null">No family</option>
-                  <option v-for="f in families.families" :key="f.id" :value="f.id">
-                    {{ f.name }}
-                  </option>
-                </select>
-              </label>
-              <label class="invite-label">
-                Uses
-                <input v-model.number="inviteMaxUses" type="number" min="1" max="100" class="invite-num" />
-              </label>
-              <label class="invite-label flex1">
-                Note
-                <input v-model="inviteNote" placeholder="e.g. for Grandma" maxlength="200" />
-              </label>
-            </div>
-            <button class="btn" @click="createInvite" :disabled="creatingInvite">
-              {{ creatingInvite ? "Creating…" : "Create invite" }}
-            </button>
-          </div>
+          <h2>{{ isAdmin ? "Invite friends" : "Invite your family" }}</h2>
 
-          <div class="invite-list">
-            <div v-for="inv in invites" :key="inv.id" class="invite-item" :class="{ inactive: !inv.is_active }">
-              <div class="invite-code-wrap">
-                <code class="invite-code">{{ inv.code }}</code>
-                <button class="btn btn-ghost btn-sm" @click="copyInvite(inv.code)">Copy</button>
+          <!-- Non-admin: read-only view of the invite that brought them in -->
+          <template v-if="!isAdmin">
+            <p class="hint">
+              Use this invite to add the rest of your family members. Once it's used up
+              ({{ myInvite ? `${myInvite.times_used}/${myInvite.max_uses}` : "—" }}),
+              ask an admin for a new one.
+            </p>
+            <div v-if="myInvite" class="my-invite">
+              <div class="my-invite-row">
+                <code class="invite-code">{{ myInvite.code }}</code>
+                <button class="btn btn-ghost btn-sm" @click="copyInvite(myInvite.code)">Copy code</button>
+              </div>
+              <div class="my-invite-row">
+                <span class="invite-link-label">Link:</span>
+                <code class="invite-link">{{ inviteLink(myInvite.code) }}</code>
+                <button class="btn btn-ghost btn-sm" @click="copyLink(myInvite.code)">Copy link</button>
               </div>
               <div class="invite-meta">
-                <span v-if="inv.family_name" class="family-badge">🏠 {{ inv.family_name }}</span>
-                <span v-if="inv.note">📝 {{ inv.note }}</span>
-                <span>{{ inv.times_used }}/{{ inv.max_uses }} used</span>
-                <span v-if="inv.is_active" class="dot dot-green" title="Active" />
+                <span v-if="myInvite.family_name" class="family-badge">🏠 {{ myInvite.family_name }}</span>
+                <span v-if="myInvite.note">📝 {{ myInvite.note }}</span>
+                <span>{{ myInvite.times_used }}/{{ myInvite.max_uses }} used</span>
+                <span v-if="myInvite.is_active" class="dot dot-green" title="Active" />
                 <span v-else class="dot dot-gray" title="Used up or revoked" />
               </div>
-              <button v-if="inv.is_active" class="btn btn-ghost btn-sm danger-text" @click="revokeInvite(inv)">
-                Revoke
+            </div>
+            <div v-else class="invites-empty">
+              No invite is on file for your account. Ask an admin to create one for you.
+            </div>
+          </template>
+
+          <!-- Admin: create + manage invites -->
+          <template v-else>
+            <p class="hint">
+              Share an invite code with a family member or friend so they can join.
+              Pick a family to add them to, or leave it as "No family".
+              Manage families under <router-link to="/families">Families</router-link>.
+            </p>
+            <div class="invite-create">
+              <div class="invite-row">
+                <label class="invite-label">
+                  Family
+                  <select v-model="inviteFamilyId" class="family-select">
+                    <option :value="null">No family</option>
+                    <option v-for="f in families.families" :key="f.id" :value="f.id">
+                      {{ f.name }}
+                    </option>
+                  </select>
+                </label>
+                <label class="invite-label">
+                  Uses
+                  <input v-model.number="inviteMaxUses" type="number" min="1" max="100" class="invite-num" />
+                </label>
+                <label class="invite-label flex1">
+                  Note
+                  <input v-model="inviteNote" placeholder="e.g. for Grandma" maxlength="200" />
+                </label>
+              </div>
+              <button class="btn" @click="createInvite" :disabled="creatingInvite">
+                {{ creatingInvite ? "Creating…" : "Create invite" }}
               </button>
             </div>
-            <div v-if="invites.length === 0" class="invites-empty">No invites yet.</div>
-          </div>
+
+            <div class="invite-list">
+              <div v-for="inv in invites" :key="inv.id" class="invite-item" :class="{ inactive: !inv.is_active }">
+                <div class="invite-code-wrap">
+                  <code class="invite-code">{{ inv.code }}</code>
+                  <button class="btn btn-ghost btn-sm" @click="copyInvite(inv.code)">Copy</button>
+                </div>
+                <div class="invite-meta">
+                  <span v-if="inv.family_name" class="family-badge">🏠 {{ inv.family_name }}</span>
+                  <span v-if="inv.note">📝 {{ inv.note }}</span>
+                  <span>{{ inv.times_used }}/{{ inv.max_uses }} used</span>
+                  <span v-if="inv.is_active" class="dot dot-green" title="Active" />
+                  <span v-else class="dot dot-gray" title="Used up or revoked" />
+                </div>
+                <button v-if="inv.is_active" class="btn btn-ghost btn-sm danger-text" @click="revokeInvite(inv)">
+                  Revoke
+                </button>
+              </div>
+              <div v-if="invites.length === 0" class="invites-empty">No invites yet.</div>
+            </div>
+          </template>
         </div>
       </div>
     </section>
@@ -415,6 +456,27 @@ function inviteLink(code) {
 }
 .danger-text { color: var(--danger); }
 .invites-empty { color: var(--text-muted); font-size: 13px; padding: 8px; }
+.my-invite {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  background: var(--accent-soft);
+  border-radius: var(--radius-sm);
+}
+.my-invite-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.invite-link-label { font-size: 12px; color: var(--text-muted); }
+.invite-link {
+  flex: 1;
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: var(--bg);
+  padding: 6px 10px;
+  border-radius: 6px;
+}
 
 @media (max-width: 768px) {
   .mobile-toggle { display: inline-block; font-size: 18px; color: var(--text); }

@@ -1,5 +1,5 @@
 <script setup>
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { storeToRefs } from "pinia";
 import { useAuthStore } from "@/stores/auth";
@@ -17,6 +17,7 @@ const auth = useAuthStore();
 const chat = useChatStore();
 const { dmConversations } = storeToRefs(chat);
 const { me } = storeToRefs(auth);
+const isAdmin = computed(() => !!me.value?.is_admin);
 
 function isNavActive(name) {
   return route.name === name;
@@ -49,7 +50,7 @@ watch(
       <button class="nav-item" :class="{ active: isNavActive('chat') }" @click="go('chat')">
         <span class="nav-icon">🌐</span> Group Chat
       </button>
-      <button class="nav-item" :class="{ active: isNavActive('members') }" @click="go('members')">
+      <button v-if="isAdmin" class="nav-item" :class="{ active: isNavActive('members') }" @click="go('members')">
         <span class="nav-icon">👥</span> Members
       </button>
       <button class="nav-item" :class="{ active: isNavActive('families') }" @click="go('families')">
@@ -81,7 +82,8 @@ watch(
       </button>
       <div v-if="dmConversations.length === 0" class="dms-empty">
         No conversations yet.
-        <router-link to="/members">Message someone →</router-link>
+        <router-link v-if="isAdmin" to="/members">Message someone →</router-link>
+        <span v-else>Start a DM from the member list.</span>
       </div>
     </div>
   </aside>

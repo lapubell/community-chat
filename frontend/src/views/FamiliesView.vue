@@ -1,10 +1,15 @@
 <script setup>
-import { ref, onMounted } from "vue";
+import { computed, ref, onMounted } from "vue";
+import { storeToRefs } from "pinia";
 import { useFamiliesStore } from "@/stores/families";
+import { useAuthStore } from "@/stores/auth";
 import { toast } from "@/composables/useToasts";
 import Sidebar from "@/components/Sidebar.vue";
 
 const families = useFamiliesStore();
+const auth = useAuthStore();
+const { me } = storeToRefs(auth);
+const isAdmin = computed(() => !!me.value?.is_admin);
 const mobileSidebar = ref(false);
 
 const newName = ref("");
@@ -113,8 +118,8 @@ async function remove(f) {
         joins — they're added to it automatically.
       </p>
 
-      <!-- Create -->
-      <div class="card create-card">
+      <!-- Create (admin only) -->
+      <div v-if="isAdmin" class="card create-card">
         <h2>New family</h2>
         <div class="create-row">
           <input v-model="newName" placeholder="e.g. Holsapples" maxlength="80" class="name-input" />
@@ -129,12 +134,12 @@ async function remove(f) {
       <div v-if="families.families.length === 0" class="empty-state">
         <div class="empty-icon">🏠</div>
         <h2>No families yet</h2>
-        <p>Create your first family above, then invite people into it.</p>
+        <p>{{ isAdmin ? "Create your first family above, then invite people into it." : "An admin hasn't created any families yet." }}</p>
       </div>
 
       <div v-else class="family-list">
         <div v-for="f in families.families" :key="f.id" class="family-card card">
-          <div v-if="editingId === f.id" class="edit-row">
+          <div v-if="isAdmin && editingId === f.id" class="edit-row">
             <input v-model="editName" maxlength="80" class="name-input" />
             <input v-model="editDesc" maxlength="280" class="desc-input" />
             <div class="edit-actions">
@@ -163,7 +168,7 @@ async function remove(f) {
               <div v-if="f.description" class="family-desc">{{ f.description }}</div>
               <div class="family-meta">{{ f.member_count }} member{{ f.member_count === 1 ? "" : "s" }}</div>
             </div>
-            <div class="family-actions">
+            <div v-if="isAdmin" class="family-actions">
               <button class="btn btn-ghost btn-sm" @click="startEdit(f)">Edit</button>
               <button class="btn btn-ghost btn-sm danger-text" @click="remove(f)">Delete</button>
             </div>

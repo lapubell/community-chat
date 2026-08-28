@@ -55,8 +55,12 @@ class User(Base):
     avatar_url: Mapped[str | None] = mapped_column(String(255), nullable=True)
     bio: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     family_id: Mapped[int | None] = mapped_column(
         ForeignKey("families.id", use_alter=True), nullable=True
+    )
+    joined_via_invite_id: Mapped[int | None] = mapped_column(
+        ForeignKey("invites.id", use_alter=True), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 

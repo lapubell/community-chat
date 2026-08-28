@@ -4,7 +4,7 @@ from sqlalchemy import select
 from ..db import get_db
 from ..models import File as FileModel, User
 from ..core.security import get_current_user
-from .upload_utils import delete_file, public_url, save_upload
+from .upload_utils import delete_file as delete_uploaded_file, public_url, save_upload
 
 router = APIRouter()
 
@@ -80,7 +80,7 @@ async def delete_file(
     record = db.get(FileModel, file_id)
     if record is None or record.owner_id != user.id:
         raise HTTPException(status_code=404, detail="File not found")
-    delete_file(public_url(record.storage_name))
+    delete_uploaded_file(public_url(record.storage_name))
     db.delete(record)
     db.commit()
     return {"ok": True}

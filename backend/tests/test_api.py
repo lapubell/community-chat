@@ -29,8 +29,13 @@ def client():
     return TestClient(app)
 
 
-def make_user(c: TestClient, handle: str, password: str = "secret123", invite: str | None = None):
-    """Create a user, generating an invite if none given. Returns (token, user)."""
+def make_user(c: TestClient, handle: str, password: str = "secret123", invite: str | None = None, as_admin: bool = False):
+    """Create a user, generating an invite if none given. Returns (token, user).
+
+    If as_admin is set, the freshly-registered user is promoted to admin in
+    the DB (the seeded admin is created by lifespan, but these users are
+    created via the public register endpoint).
+    """
     if invite is None:
         # first user: create an invite directly via db
         from app.db import SessionLocal
@@ -55,6 +60,15 @@ def make_user(c: TestClient, handle: str, password: str = "secret123", invite: s
     )
     assert r.status_code == 200, r.text
     data = r.json()
+    if as_admin:
+        from app.db import SessionLocal
+        from app.models import User
+
+        db = SessionLocal()
+        u = db.query(User).filter(User.handle == handle).first()
+        u.is_admin = True
+        db.commit()
+        db.close()
     return data["token"], data["user"]
 
 
@@ -112,7 +126,7 @@ def test_profile_update_and_settings():
 
 def test_invite_lifecycle():
     c = client()
-    t1, _ = make_user(c, "carol")
+    t1, _ = make_user(c, "carol", as_admin=True)
     r = c.get("/api/invites", headers=auth(t1))
     assert r.status_code == 200
     assert isinstance(r.json(), list)
@@ -135,7 +149,7 @@ def test_invite_lifecycle():
 
 def test_group_messages_crud():
     c = client()
-    t1, _ = make_user(c, "frank")
+    t1, _ = make_user(c, "frank", as_admin=True)
     t2, _ = make_user(c, "grace", invite=_next_invite(c, t1))
 
     r = c.post("/api/messages", headers=auth(t1), json={"text": "hello world"})
@@ -182,7 +196,7 @@ def test_group_messages_crud():
 
 def test_dm_conversation_and_read_receipts():
     c = client()
-    t1, _ = make_user(c, "heidi")
+    t1, _ = make_user(c, "heidi", as_admin=True)
     t2, u2 = make_user(c, "ivan", invite=_next_invite(c, t1))
     ivan_id = u2["id"]
 
