@@ -5,6 +5,7 @@ import { useRouter } from "vue-router";
 import { useFamiliesStore } from "@/stores/families";
 import { useAuthStore } from "@/stores/auth";
 import { useChatStore } from "@/stores/chat";
+import { api } from "@/api";
 import { toast } from "@/composables/useToasts";
 import Sidebar from "@/components/Sidebar.vue";
 
@@ -45,6 +46,60 @@ const saving = ref(false);
 
 const uploadingFor = ref(null);
 const fileInputs = ref({});
+
+// Per-family inline invite creation (admin only).
+const invitingFor = ref(null);
+const inviteUses = ref(1);
+const inviteResult = ref(null); // { familyId, code, link, uses }
+const creatingInvite = ref(false);
+
+function inviteLink(code) {
+  return `${window.location.origin}/login?code=${code}`;
+}
+
+function startInvite(f) {
+  if (invitingFor.value === f.id) {
+    cancelInvite();
+    return;
+  }
+  inviteResult.value = null;
+  inviteUses.value = 1;
+  invitingFor.value = f.id;
+}
+
+function cancelInvite() {
+  invitingFor.value = null;
+  inviteResult.value = null;
+  inviteUses.value = 1;
+}
+
+async function createInvite(f) {
+  if (creatingInvite.value) return;
+  creatingInvite.value = true;
+  try {
+    const invite = await api.post("/api/invites", {
+      max_uses: inviteUses.value,
+      family_id: f.id,
+      note: `for ${f.name}`,
+    });
+    inviteResult.value = {
+      familyId: f.id,
+      code: invite.code,
+      link: inviteLink(invite.code),
+      uses: invite.max_uses,
+    };
+    toast("Invite created", "success");
+  } catch (e) {
+    toast(e.message, "error");
+  } finally {
+    creatingInvite.value = false;
+  }
+}
+
+async function copyText(text, label) {
+  await navigator.clipboard.writeText(text);
+  toast(`${label} copied to clipboard`, "success");
+}
 
 onMounted(async () => {
   await families.load(true).catch((e) => toast(e.message, "error"));
@@ -202,8 +257,50 @@ async function remove(f) {
               <button v-else class="btn btn-ghost btn-sm" disabled>Your family</button>
               <template v-if="isAdmin">
                 <button class="btn btn-ghost btn-sm" @click="startEdit(f)">Edit</button>
+                <button
+                  class="btn btn-ghost btn-sm"
+                  :class="{ active: invitingFor === f.id }"
+                  @click="startInvite(f)"
+                >
+                  ✉️ Invite
+                </button>
                 <button class="btn btn-ghost btn-sm danger-text" @click="remove(f)">Delete</button>
               </template>
+            </div>
+          </div>
+
+          <!-- Inline invite panel (admin only) -->
+          <div v-if="isAdmin && invitingFor === f.id" class="invite-panel">
+            <div class="invite-panel-head">
+              <span class="invite-panel-title">Invite to {{ f.name }}</span>
+              <button class="btn btn-ghost btn-sm" @click="cancelInvite">Close</button>
+            </div>
+            <div v-if="!inviteResult" class="invite-prompt">
+              <label class="invite-uses-label">
+                Times it can be used
+                <input
+                  v-model.number="inviteUses"
+                  type="number"
+                  min="1"
+                  max="100"
+                  class="invite-uses"
+                />
+              </label>
+              <button class="btn btn-sm" :disabled="creatingInvite" @click="createInvite(f)">
+                {{ creatingInvite ? "Creating…" : "Create invite" }}
+              </button>
+            </div>
+            <div v-else class="invite-result">
+              <div class="invite-code-row">
+                <code class="invite-code">{{ inviteResult.code }}</code>
+                <button class="btn btn-ghost btn-sm" @click="copyText(inviteResult.code, 'Code')">Copy code</button>
+              </div>
+              <div class="invite-link-row">
+                <span class="invite-link-label">Link:</span>
+                <code class="invite-link">{{ inviteResult.link }}</code>
+                <button class="btn btn-ghost btn-sm" @click="copyText(inviteResult.link, 'Link')">Copy link</button>
+              </div>
+              <p class="invite-uses-note">{{ inviteResult.uses }} use{{ inviteResult.uses === 1 ? "" : "s" }} · new members join {{ f.name }}</p>
             </div>
           </div>
         </div>
@@ -270,10 +367,61 @@ async function remove(f) {
 .family-name { font-weight: 600; font-size: 16px; }
 .family-desc { font-size: 13px; color: var(--text-muted); margin-top: 4px; white-space: pre-wrap; }
 .family-meta { font-size: 12px; color: var(--text-muted); margin-top: 6px; }
-.family-actions { display: flex; gap: 8px; }
+.family-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.family-actions .btn.active { background: var(--accent-soft); color: var(--accent-hover); border-color: var(--accent); }
 .edit-row { display: flex; flex-direction: column; gap: 10px; }
 .edit-actions { display: flex; gap: 8px; }
 .danger-text { color: var(--danger); }
+.invite-panel {
+  margin-top: 12px;
+  padding: 14px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.invite-panel-head { display: flex; align-items: center; justify-content: space-between; }
+.invite-panel-title { font-weight: 600; font-size: 14px; }
+.invite-prompt { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; }
+.invite-uses-label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.invite-uses { width: 90px; }
+.invite-result {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  background: var(--accent-soft);
+  border-radius: var(--radius-sm);
+}
+.invite-code-row,
+.invite-link-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.invite-code {
+  font-family: monospace;
+  font-size: 18px;
+  letter-spacing: 0.08em;
+  background: var(--bg);
+  padding: 6px 12px;
+  border-radius: 6px;
+}
+.invite-link-label { font-size: 12px; color: var(--text-muted); }
+.invite-link {
+  flex: 1;
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: var(--bg);
+  padding: 6px 10px;
+  border-radius: 6px;
+}
+.invite-uses-note { font-size: 12px; color: var(--text-muted); margin: 0; }
 
 @media (max-width: 768px) {
   .mobile-toggle { display: inline-block; font-size: 18px; color: var(--text); }
