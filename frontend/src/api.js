@@ -20,7 +20,10 @@ async function request(path, options = {}) {
   const res = await fetch(BASE + path, { ...options, headers });
   if (res.status === 401) {
     setToken(null);
-    window.location.href = "/login";
+    // Let the SPA handle the redirect (a full-page reload here would fight
+    // the router and surface as a jarring error). Dispatch an event that a
+    // listener uses to navigate to /login via the router.
+    window.dispatchEvent(new CustomEvent("auth:unauthorized"));
     throw new Error("Unauthorized");
   }
   if (!res.ok) {
