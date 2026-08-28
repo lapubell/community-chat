@@ -100,6 +100,7 @@ function timeStr(iso) {
         :message-id="message.id"
         :channel="channel"
         :peer-id="peerId"
+        :is-own="isOwn"
       />
 
       <div v-if="isOwn && channel === 'group'" class="actions">

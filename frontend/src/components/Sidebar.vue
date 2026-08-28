@@ -161,6 +161,7 @@ watch(
   font-size: 13px;
   color: var(--text-muted);
 }
+.mobile-close { display: none; }
 
 @media (max-width: 768px) {
   .sidebar {
@@ -173,6 +174,7 @@ watch(
   }
   .sidebar.open { transform: translateX(0); }
   .mobile-close {
+    display: block;
     position: absolute;
     top: 12px;
     right: 12px;
