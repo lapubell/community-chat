@@ -22,7 +22,7 @@ import json
 import logging
 from typing import Any
 
-from fastapi import WebSocket
+from fastapi import WebSocket, WebSocketDisconnect
 from sqlalchemy.orm import Session
 
 from .db import SessionLocal, get_db, create_all
@@ -158,8 +158,10 @@ async def ws_endpoint(ws: WebSocket, token: str = ""):
                         peer_id,
                         {"type": "dm.read", "channel": "dm", "peer_id": user.id, "up_to_id": up_to_id},
                     )
+    except WebSocketDisconnect as exc:
+        logger.info("ws client disconnect: user=%s code=%s reason=%r", user.id, exc.code, exc.reason)
     except Exception as exc:
-        logger.debug("websocket error for user %s: %s", user.id, exc)
+        logger.exception("websocket error for user %s: %s", user.id, exc)
     finally:
         await hub.unregister(user.id, ws)
 

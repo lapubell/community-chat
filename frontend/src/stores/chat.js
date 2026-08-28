@@ -104,6 +104,30 @@ export const useChatStore = defineStore("chat", {
         message.reactions.push(result);
       }
     },
+    _updateReaction(msg) {
+      let message = null;
+      if (msg.channel === "dm") {
+        for (const key in this.dmMessages) {
+          message = this.dmMessages[key].find((m) => m.id === msg.message_id);
+          if (message) break;
+        }
+      } else {
+        message = this.groupMessages.find((m) => m.id === msg.message_id);
+      }
+      if (!message) return;
+      if (!message.reactions) message.reactions = [];
+      if (msg.count === 0) {
+        message.reactions = message.reactions.filter((r) => r.emoji !== msg.emoji);
+        return;
+      }
+      const existing = message.reactions.find((r) => r.emoji === msg.emoji);
+      if (existing) {
+        existing.user_ids = msg.user_ids;
+        existing.count = msg.count;
+      } else {
+        message.reactions.push({ emoji: msg.emoji, user_ids: msg.user_ids, count: msg.count });
+      }
+    },
     async loadDmConversations() {
       this.dmConversations = await api.get("/api/dms/conversations");
     },
