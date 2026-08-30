@@ -22,10 +22,14 @@ services:
       # Public origin of the site, used as the VAPID audience / deep-link base.
       - APP_ORIGIN=${APP_ORIGIN:-http://localhost:8983}
     volumes:
-      - chat-data:/app/data
+      # The SQLite DB lives in the project root under ./data so it's easy to
+      # find and inspect (e.g. open ./data/chat.db). Bind-mounted at /app/data
+      # inside the container (DATA_DIR). The container runs as uid 1000
+      # (appuser), so the file must be owned/writable by uid 1000 — on most
+      # hosts that's your normal user.
+      - ./data:/app/data
       - chat-uploads:/app/uploads
     restart: unless-stopped
 
 volumes:
-  chat-data:
   chat-uploads:
