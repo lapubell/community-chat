@@ -15,6 +15,12 @@ services:
       - UPLOAD_DIR=/app/uploads
       - FRONTEND_DIR=/app/frontend_dist
       - JWT_SECRET=${JWT_SECRET:-please-change-this-secret}
+      # Web Push (VAPID) — optional; push is disabled without these.
+      - VAPID_PRIVATE_KEY=${VAPID_PRIVATE_KEY:-}
+      - VAPID_PUBLIC_KEY=${VAPID_PUBLIC_KEY:-}
+      - VAPID_EMAIL=${VAPID_EMAIL:-mailto:admin@example.com}
+      # Public origin of the site, used as the VAPID audience / deep-link base.
+      - APP_ORIGIN=${APP_ORIGIN:-http://localhost:8983}
     volumes:
       - chat-data:/app/data
       - chat-uploads:/app/uploads

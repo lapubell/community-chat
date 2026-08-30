@@ -7,6 +7,7 @@ from ..db import get_db
 from ..models import DmRoom, Family, Reaction, RoomMessage, User
 from ..core.security import get_current_user
 from ..ws import hub
+from .push import room_push_task
 
 router = APIRouter()
 
@@ -233,6 +234,22 @@ async def send_room_message(
     member_ids = _room_member_ids(db, room)
     asyncio.get_event_loop().create_task(
         hub.send_to_many(member_ids, {"type": "dm.new", "channel": "room", "message": payload}, exclude=user.id)
+    )
+
+    # Push notification to the other families in the room (best-effort).
+    other_fams = [f.name for f in room.families if f.id != user.family_id]
+    fam_label = " & ".join(other_fams) if other_fams else "Family chat"
+    push_payload = {
+        "title": f"Message from {fam_label}",
+        "body": (user.display_name or user.handle) + (f": {text[:140]}" if text else " (attachment)"),
+        "tag": f"room-{room.id}-{msg.id}",
+        "icon": "/icon-192.png",
+        "url": f"/room/{room.id}",
+        "channel": "room",
+        "room_id": room.id,
+    }
+    asyncio.get_event_loop().create_task(
+        room_push_task(member_ids=member_ids, sender_id=user.id, payload=push_payload)
     )
     return payload
 

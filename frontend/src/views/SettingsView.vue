@@ -5,6 +5,7 @@ import { useAuthStore } from "@/stores/auth";
 import { useFamiliesStore } from "@/stores/families";
 import { api } from "@/api";
 import { toast } from "@/composables/useToasts";
+import { usePush, pushStatus, subscribePush, unsubscribePush } from "@/composables/usePush";
 import Sidebar from "@/components/Sidebar.vue";
 import Avatar from "@/components/Avatar.vue";
 
@@ -32,6 +33,8 @@ const notifyMentions = ref(true);
 const notifyReplies = ref(true);
 const savingSettings = ref(false);
 
+const push = usePush();
+
 const invites = ref([]);
 const inviteMaxUses = ref(1);
 const inviteNote = ref("");
@@ -46,6 +49,7 @@ onMounted(async () => {
     bio.value = me.value.bio || "";
     avatarPreview.value = me.value.avatar_url;
   }
+  pushStatus();
   try {
     const s = await api.get("/api/auth/me/settings");
     dnd.value = s.do_not_disturb;
@@ -128,6 +132,17 @@ async function saveSettings() {
   }
 }
 
+async function onPushToggle(checked) {
+  if (checked) {
+    const ok = await subscribePush();
+    if (!ok && push.error) toast(push.error, "error");
+    else toast("Notifications enabled", "success");
+  } else {
+    await unsubscribePush();
+    toast("Notifications disabled", "success");
+  }
+}
+
 async function createInvite() {
   creatingInvite.value = true;
   try {
@@ -207,6 +222,28 @@ function inviteLink(code) {
 
         <div class="card settings-card">
           <h2>Notifications</h2>
+
+          <!-- Web push (works even when the app/tab is closed) -->
+          <div class="push-block">
+            <label class="toggle-row">
+              <span class="push-label">
+                <span>Push notifications</span>
+                <small v-if="!push.supported">Not supported in this browser</small>
+                <small v-else-if="push.permission === 'denied'">Blocked — re-enable in your browser's site settings</small>
+                <small v-else-if="push.permission === 'default'">Alerts when a new message arrives and the app is closed</small>
+                <small v-else-if="push.subscribed">On — you'll get alerts for new group &amp; family messages</small>
+              </span>
+              <input
+                type="checkbox"
+                class="toggle"
+                :checked="push.subscribed"
+                :disabled="!push.supported || push.permission === 'denied' || push.busy"
+                @change="onPushToggle($event.target.checked)"
+              />
+            </label>
+            <p v-if="push.error" class="push-error">{{ push.error }}</p>
+          </div>
+
           <label class="toggle-row">
             <span>Do not disturb</span>
             <input v-model="dnd" type="checkbox" class="toggle" />
@@ -406,6 +443,17 @@ function inviteLink(code) {
 }
 .toggle:checked { background: var(--accent); }
 .toggle:checked::after { left: 20px; }
+.push-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: var(--bg-hover);
+  border-radius: var(--radius-sm);
+}
+.push-label { display: flex; flex-direction: column; gap: 2px; }
+.push-label small { color: var(--text-muted); font-size: 11px; font-weight: 400; }
+.push-error { color: var(--danger); font-size: 12px; }
 .invite-create {
   display: flex;
   flex-direction: column;

@@ -8,6 +8,7 @@ from ..db import get_db
 from ..models import GroupMessage, Reaction, User
 from ..core.security import get_current_user
 from ..ws import hub
+from .push import group_push_task
 
 router = APIRouter()
 
@@ -118,6 +119,18 @@ async def send_message(
     payload = message_payload(db, msg)
     asyncio.get_event_loop().create_task(
         hub.broadcast({"type": "message.new", "channel": "group", "message": payload})
+    )
+    # Push notification to everyone else (best-effort, background).
+    push_payload = {
+        "title": "New message",
+        "body": (user.display_name or user.handle) + (f": {text[:140]}" if text else " (attachment)"),
+        "tag": f"group-{msg.id}",
+        "icon": "/icon-192.png",
+        "url": "/",
+        "channel": "group",
+    }
+    asyncio.get_event_loop().create_task(
+        group_push_task(sender_id=user.id, payload=push_payload)
     )
     return payload
 

@@ -68,3 +68,45 @@ self.addEventListener("fetch", (e) => {
   // deploys. Always hitting the network means the user always gets the
   // current index.html (and thus the current JS/CSS).
 });
+
+// ---------------------------------------------------------------------------
+// Push notifications
+// ---------------------------------------------------------------------------
+// The backend sends a small JSON payload: { title, body, tag, icon, url }.
+// We show it as a system notification; tapping it opens the deep link.
+self.addEventListener("push", (e) => {
+  let data = { title: "New message", body: "", icon: "/icon-192.png", url: "/", tag: "" };
+  try {
+    if (e.data) data = { ...data, ...e.data.json() };
+  } catch {
+    /* keep defaults */
+  }
+  e.waitUntil(
+    self.registration.showNotification(data.title, {
+      body: data.body || "",
+      icon: data.icon || "/icon-192.png",
+      badge: "/icon-192.png",
+      tag: data.tag || undefined,
+      data: { url: data.url || "/" },
+    })
+  );
+});
+
+self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  const url = (e.notification.data && e.notification.data.url) || "/";
+  e.waitUntil(
+    clients
+      .matchAll({ type: "window", includeUncontrolled: true })
+      .then((wins) => {
+        for (const w of wins) {
+          if (w.url === new URL(url, self.location.origin).href || w.url.endsWith(url)) {
+            w.focus();
+            return w;
+          }
+        }
+        return clients.openWindow(url);
+      })
+      .catch(() => clients.openWindow(url))
+  );
+});

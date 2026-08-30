@@ -67,6 +67,9 @@ class User(Base):
     family: Mapped["Family | None"] = relationship("Family", foreign_keys=[family_id], back_populates="members")
     invites_used: Mapped[list["Invite"]] = relationship("Invite", foreign_keys="Invite.user_id")
     dm_settings: Mapped["DMSettings | None"] = relationship("DMSettings", uselist=False, back_populates="user", cascade="all, delete-orphan")
+    push_subscriptions: Mapped[list["PushSubscription"]] = relationship(
+        "PushSubscription", foreign_keys="PushSubscription.user_id", cascade="all, delete-orphan"
+    )
 
 
 class Family(Base):
@@ -100,6 +103,29 @@ class Invite(Base):
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     family: Mapped["Family | None"] = relationship("Family")
+
+
+class PushSubscription(Base):
+    """A Web Push (VAPID) subscription for one user, per device/browser.
+
+    ``endpoint`` is the push-service URL (unique per subscription). ``keys``
+    holds the user's public key + auth secret (from pushManager.subscribe).
+    A user can have several (phone + laptop); we fan a push out to all of
+    them and drop any whose endpoint the push service rejects (404/410).
+    """
+
+    __tablename__ = "push_subscriptions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    endpoint: Mapped[str] = mapped_column(String(1024), unique=True, nullable=False)
+    p256dh: Mapped[str] = mapped_column(String(255), nullable=False)
+    auth: Mapped[str] = mapped_column(String(255), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    user_agent: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    user: Mapped["User"] = relationship("User", foreign_keys=[user_id], back_populates="push_subscriptions")
 
 
 class DMSettings(Base):

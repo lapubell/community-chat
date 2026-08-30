@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .db import create_all
 from .seed import seed_admin
-from .routers import auth, dms, families, files, invites, messages
+from .routers import auth, dms, families, files, invites, messages, push
 from .routers.upload_utils import UPLOAD_DIR
 from .ws import hub, ws_endpoint
 
@@ -59,6 +59,7 @@ app.include_router(families.router, prefix="/api/families", tags=["families"])
 app.include_router(messages.router, prefix="/api/messages", tags=["messages"])
 app.include_router(dms.router, prefix="/api/dms", tags=["dms"])
 app.include_router(files.router, prefix="/api/files", tags=["files"])
+app.include_router(push.router, prefix="/api/push", tags=["push"])
 
 
 @app.websocket("/ws")
