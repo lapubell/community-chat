@@ -14,6 +14,9 @@ data/
 *.db-journal
 *.db-wal
 *.db-shm
+# Uploaded files (avatars, attachments) live at the project root under
+# ./uploads (bind-mounted into the container at /app/uploads).
+uploads/
 
 # Frontend
 frontend/node_modules/
@@ -24,7 +27,7 @@ frontend/dist/
 .env.*
 !.env.example
 
-# Docker volumes are named, but ignore any local bind-mount residue
+# Catch any other local SQLite residue
 *.sqlite3
 
 # OS / editor

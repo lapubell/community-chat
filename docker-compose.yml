@@ -28,8 +28,8 @@ services:
       # (appuser), so the file must be owned/writable by uid 1000 — on most
       # hosts that's your normal user.
       - ./data:/app/data
-      - chat-uploads:/app/uploads
+      # Uploaded files (avatars, message attachments) live in ./uploads at the
+      # project root so they're easy to find/inspect. Bind-mounted at
+      # /app/uploads (UPLOAD_DIR). Same uid-1000 ownership note as ./data.
+      - ./uploads:/app/uploads
     restart: unless-stopped
-
-volumes:
-  chat-uploads:
