@@ -15,7 +15,10 @@ os.environ["ADMIN_PASSWORD"] = "adminpass123"
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import io  # noqa: E402
+
 from fastapi.testclient import TestClient  # noqa: E402
+from PIL import Image  # noqa: E402
 
 from app.main import app  # noqa: E402
 from app.db import Base, engine  # noqa: E402
@@ -23,6 +26,17 @@ from app.db import Base, engine  # noqa: E402
 
 def auth_header(token: str):
     return {"Authorization": f"Bearer {token}"}
+
+
+def make_png(width: int, height: int, color=(200, 30, 30)) -> bytes:
+    """A real, decodable PNG (so the avatar processor has something to crop)."""
+    img = Image.new("RGB", (width, height), color)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+WEBP_MAGIC = b"RIFF"  # WebP files start with RIFF....WEBP
 
 
 def test_families_full_flow():
@@ -123,33 +137,37 @@ def test_families_full_flow():
         assert r.status_code == 400
 
         # --- Family avatar upload + replace ---
-        # Upload an avatar for Holsapples.
-        png_bytes = b"\x89PNG\r\n\x1a\n" + b"0" * 32
+        # Upload a *large, non-square* image: it should be center-cropped to a
+        # square, resized to 500x500, and stored as WebP.
+        big_png = make_png(1200, 900, color=(200, 30, 30))
         r = c.post(
             f"/api/families/{fam1['id']}/avatar",
             headers=auth_header(admin_token),
-            files={"file": ("family.png", png_bytes, "image/png")},
+            files={"file": ("family.png", big_png, "image/png")},
         )
         assert r.status_code == 200, r.text
         avatar1 = r.json()
         assert avatar1["avatar_url"] is not None
         assert avatar1["avatar_url"].startswith("/uploads/")
 
+        # The stored file is a 500x500 WebP, not the original PNG.
+        r = c.get(avatar1["avatar_url"])
+        assert r.status_code == 200
+        assert r.content[:4] == WEBP_MAGIC
+        img = Image.open(io.BytesIO(r.content))
+        assert img.format == "WEBP"
+        assert img.size == (500, 500), img.size
+
         # The avatar is visible in the family list.
         r = c.get("/api/families", headers=auth_header(admin_token))
         fam1_now = [f for f in r.json() if f["id"] == fam1["id"]][0]
         assert fam1_now["avatar_url"] == avatar1["avatar_url"]
 
-        # The uploaded file is actually served.
-        r = c.get(avatar1["avatar_url"])
-        assert r.status_code == 200
-        assert r.content == png_bytes
-
         # Replace it: the old file should be gone, the new one set.
         r = c.post(
             f"/api/families/{fam1['id']}/avatar",
             headers=auth_header(admin_token),
-            files={"file": ("family2.png", png_bytes + b"X", "image/png")},
+            files={"file": ("family2.png", make_png(640, 640, color=(30, 120, 200)), "image/png")},
         )
         assert r.status_code == 200, r.text
         avatar2 = r.json()
@@ -158,10 +176,11 @@ def test_families_full_flow():
         # Old file deleted (no revisions kept).
         r = c.get(avatar1["avatar_url"])
         assert r.status_code == 404
-        # New file served.
+        # New file served (also a 500x500 WebP).
         r = c.get(avatar2["avatar_url"])
         assert r.status_code == 200
-        assert r.content == png_bytes + b"X"
+        assert r.content[:4] == WEBP_MAGIC
+        assert Image.open(io.BytesIO(r.content)).size == (500, 500)
 
         # Non-image is rejected.
         r = c.post(
@@ -171,11 +190,19 @@ def test_families_full_flow():
         )
         assert r.status_code == 415
 
+        # A declared image that isn't actually decodable is rejected too.
+        r = c.post(
+            f"/api/families/{fam1['id']}/avatar",
+            headers=auth_header(admin_token),
+            files={"file": ("corrupt.png", b"\x89PNG\r\n\x1a\n" + b"0" * 32, "image/png")},
+        )
+        assert r.status_code == 415
+
         # Avatar on a non-existent family.
         r = c.post(
             "/api/families/9999/avatar",
             headers=auth_header(admin_token),
-            files={"file": ("x.png", png_bytes, "image/png")},
+            files={"file": ("x.png", big_png, "image/png")},
         )
         assert r.status_code == 404
 
@@ -258,11 +285,10 @@ def test_admin_gating():
         assert any(f["id"] == fam["id"] for f in r.json())
 
         # Non-admin CAN set a family avatar (members may update it).
-        png_bytes = b"\x89PNG\r\n\x1a\n" + b"0" * 32
         r = c.post(
             f"/api/families/{fam['id']}/avatar",
             headers=auth_header(alice_token),
-            files={"file": ("fam.png", png_bytes, "image/png")},
+            files={"file": ("fam.png", make_png(800, 600, color=(20, 160, 60)), "image/png")},
         )
         assert r.status_code == 200
 

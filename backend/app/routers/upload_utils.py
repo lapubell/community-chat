@@ -4,12 +4,14 @@ Used by the general files router and the family-avatar endpoint. Files are
 stored flat under UPLOAD_DIR with a collision-safe name and served from
 /uploads/<storage_name>.
 """
+import io
 import os
 import secrets
 from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import HTTPException, UploadFile
+from PIL import Image
 
 # Single source of truth for where uploaded files live. main.py imports this
 # so the write path and the /uploads serve path always agree.
@@ -70,6 +72,60 @@ async def save_upload(
     UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     (UPLOAD_DIR / storage_name).write_bytes(content)
     return storage_name, len(content)
+
+
+# Avatars are only ever rendered as small circular previews, so we shrink
+# them aggressively on upload: center-crop to a square, resize to 500x500,
+# and re-encode as WebP. This keeps disk + transfer size tiny.
+AVATAR_SIZE = 500
+AVATAR_WEBP_QUALITY = 85
+
+
+def process_avatar(content: bytes, *, prefix: str) -> tuple[str, int]:
+    """Crop/resize an uploaded avatar image and store it as a 500x500 WebP.
+
+    Center-crops to a square, resizes to AVATAR_SIZE x AVATAR_SIZE, and
+    encodes as WebP. Returns (storage_name, size). Raises 415 for a
+    non-decodable image and 413 for an oversized upload.
+    """
+    if len(content) > MAX_UPLOAD_SIZE:
+        raise HTTPException(status_code=413, detail="File too large (max 10 MB)")
+
+    try:
+        img = Image.open(io.BytesIO(content))
+        img.load()
+        # Normalize palette/alpha images so the square crop + resize work
+        # cleanly (e.g. palette PNGs, animated GIFs -> first frame).
+        if img.mode not in ("RGB", "RGBA"):
+            img = img.convert("RGBA")
+    except Exception as exc:  # noqa: BLE001 - any decode failure is a bad image
+        raise HTTPException(status_code=415, detail="Could not read that image") from exc
+
+    # Center-crop to a square.
+    w, h = img.size
+    side = min(w, h)
+    left = (w - side) // 2
+    top = (h - side) // 2
+    img = img.crop((left, top, left + side, top + side))
+
+    # Resize to the target square (high-quality downscale).
+    img = img.resize((AVATAR_SIZE, AVATAR_SIZE), Image.LANCZOS)
+
+    # Drop the alpha channel for a clean WebP (solid backgrounds are filled
+    # with black only if the source had transparency; most avatars are opaque).
+    if img.mode == "RGBA":
+        background = Image.new("RGB", img.size, (255, 255, 255))
+        background.paste(img, mask=img.split()[3])
+        img = background
+
+    buffer = io.BytesIO()
+    img.save(buffer, format="WEBP", quality=AVATAR_WEBP_QUALITY)
+    data = buffer.getvalue()
+
+    storage_name = _storage_name(prefix, ".webp")
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    (UPLOAD_DIR / storage_name).write_bytes(data)
+    return storage_name, len(data)
 
 
 def delete_file(public_file_url: str | None) -> None:

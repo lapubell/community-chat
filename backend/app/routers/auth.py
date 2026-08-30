@@ -1,12 +1,15 @@
+import asyncio
 import os
 import secrets
 
 import string
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File as FileField, HTTPException, UploadFile
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from sqlalchemy import delete, func, select
+
+from .upload_utils import IMAGE_CONTENT_TYPES, delete_file, process_avatar, public_url
 
 from ..db import SessionLocal, get_db
 from ..models import (
@@ -267,6 +270,31 @@ async def update_profile(req: ProfileUpdate, user: User = Depends(get_current_us
         value = getattr(req, field_name)
         if value is not None:
             setattr(user, field_name, value.strip() if isinstance(value, str) else value)
+    db.commit()
+    db.refresh(user)
+    return public_user(user)
+
+
+@router.post("/me/avatar")
+async def upload_my_avatar(
+    file: UploadFile = FileField(...),
+    user: User = Depends(get_current_user),
+    db=Depends(get_db),
+):
+    """Upload (or replace) the current user's avatar.
+
+    The image is center-cropped to a square, resized to 500x500, and stored
+    as WebP (avatars are only shown as small circular previews). The previous
+    file is deleted from disk so no full-resolution revision is retained.
+    """
+    if file.content_type not in IMAGE_CONTENT_TYPES:
+        raise HTTPException(status_code=415, detail="Unsupported file type")
+
+    content = await file.read()
+    storage_name, _size = await asyncio.to_thread(process_avatar, content, prefix=f"user{user.id}")
+    # Replace in place: drop the old avatar file, point at the new one.
+    delete_file(user.avatar_url)
+    user.avatar_url = public_url(storage_name)
     db.commit()
     db.refresh(user)
     return public_user(user)

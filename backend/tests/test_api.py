@@ -3,6 +3,7 @@
 Each test run drops and recreates all tables, so no state leaks between runs
 and nothing touches a real data file.
 """
+import io
 import os
 import sys
 import tempfile
@@ -18,9 +19,17 @@ os.environ["UPLOAD_DIR"] = os.path.join(_tmp, "uploads")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from fastapi.testclient import TestClient  # noqa: E402
+from PIL import Image  # noqa: E402
 
 from app.main import app  # noqa: E402
 from app.db import Base, engine  # noqa: E402
+
+
+def _png(width: int, height: int, color=(10, 90, 180)) -> bytes:
+    img = Image.new("RGB", (width, height), color)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
 
 
 def client():
@@ -122,6 +131,51 @@ def test_profile_update_and_settings():
     )
     assert r.status_code == 200
     assert r.json()["do_not_disturb"] is True
+
+
+def test_user_avatar_processed_to_webp():
+    c = client()
+    token, user = make_user(c, "carl")
+    uid = user["id"]
+
+    # Upload a large non-square image via the dedicated avatar endpoint.
+    r = c.post(
+        "/api/auth/me/avatar",
+        headers=auth(token),
+        files={"file": ("me.png", _png(1000, 700), "image/png")},
+    )
+    assert r.status_code == 200, r.text
+    avatar_url = r.json()["avatar_url"]
+    assert avatar_url and avatar_url.startswith("/uploads/")
+
+    # Stored file is a 500x500 WebP.
+    r = c.get(avatar_url)
+    assert r.status_code == 200
+    assert r.content[:4] == b"RIFF"
+    img = Image.open(io.BytesIO(r.content))
+    assert img.format == "WEBP"
+    assert img.size == (500, 500), img.size
+
+    # Replacing it deletes the old file (no full-res revision retained).
+    old_url = avatar_url
+    r = c.post(
+        "/api/auth/me/avatar",
+        headers=auth(token),
+        files={"file": ("me2.png", _png(400, 400, color=(200, 20, 20)), "image/png")},
+    )
+    assert r.status_code == 200
+    new_url = r.json()["avatar_url"]
+    assert new_url != old_url
+    assert c.get(old_url).status_code == 404
+    assert c.get(new_url).status_code == 200
+
+    # Non-image rejected.
+    r = c.post(
+        "/api/auth/me/avatar",
+        headers=auth(token),
+        files={"file": ("evil.exe", b"MZ", "application/octet-stream")},
+    )
+    assert r.status_code == 415
 
 
 def test_invite_lifecycle():

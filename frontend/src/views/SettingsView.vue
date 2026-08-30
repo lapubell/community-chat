@@ -20,7 +20,6 @@ const displayName = ref("");
 const email = ref("");
 const phone = ref("");
 const bio = ref("");
-const avatarFile = ref(null);
 const avatarPreview = ref(null);
 const savingProfile = ref(false);
 
@@ -92,11 +91,20 @@ async function onAvatarFile(e) {
     toast("Choose an image file", "error");
     return;
   }
-  const fd = new FormData();
-  fd.append("file", file);
-  const result = await api.upload("/api/files/upload", fd);
-  avatarFile.value = result;
-  avatarPreview.value = result.url;
+  try {
+    // Dedicated avatar endpoint: server center-crops to a square, resizes to
+    // 500x500, and stores WebP. It updates the profile's avatar_url directly.
+    const fd = new FormData();
+    fd.append("file", file);
+    const updated = await api.upload("/api/auth/me/avatar", fd);
+    auth.user = updated;
+    avatarPreview.value = updated.avatar_url;
+    toast("Avatar updated", "success");
+  } catch (err) {
+    toast(err.message || "Could not upload avatar", "error");
+  }
+  // Reset the input so the same file can be re-selected.
+  e.target.value = "";
 }
 
 async function changePassword() {

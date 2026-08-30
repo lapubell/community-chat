@@ -1,3 +1,5 @@
+import asyncio
+
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -5,7 +7,7 @@ from sqlalchemy import select
 from ..db import get_db
 from ..models import Family, User
 from ..core.security import get_current_user, require_admin
-from .upload_utils import delete_file, IMAGE_CONTENT_TYPES, public_url, save_upload
+from .upload_utils import delete_file, IMAGE_CONTENT_TYPES, process_avatar, public_url
 
 router = APIRouter()
 
@@ -137,10 +139,13 @@ async def upload_family_avatar(
     if family is None:
         raise HTTPException(status_code=404, detail="Family not found")
 
-    storage_name, _size = await save_upload(
-        file,
-        prefix=f"family{family_id}",
-        allowed_content_types=IMAGE_CONTENT_TYPES,
+    if file.content_type not in IMAGE_CONTENT_TYPES:
+        raise HTTPException(status_code=415, detail="Unsupported file type")
+
+    content = await file.read()
+    # PIL work is CPU-bound; run it off the event loop.
+    storage_name, _size = await asyncio.to_thread(
+        process_avatar, content, prefix=f"family{family_id}"
     )
     # Replace the existing avatar and remove its file (no revision history).
     delete_file(family.avatar_url)
