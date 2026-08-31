@@ -13,6 +13,9 @@ const router = useRouter();
 
 // Short git SHA of this build (injected at build time; "dev" locally).
 const gitHash = import.meta.env.APP_GIT_HASH || "dev";
+// Dynamic copyright year + the project repo (footer links here).
+const year = new Date().getFullYear();
+const repoUrl = "https://github.com/open-function-computers-llc/community-chat";
 
 const installPrompt = ref(null);
 const notifPermission = ref("Notification" in window ? Notification.permission : "denied");
@@ -90,7 +93,9 @@ onMounted(async () => {
       <RouterView />
     </main>
     <footer class="app-footer">
-      <span>&copy; 2026 &middot; Community Chat</span>
+      <a class="app-footer-link" :href="repoUrl" target="_blank" rel="noopener noreferrer">
+        &copy; {{ year }} &middot; Community Chat
+      </a>
       <span class="app-version" :title="'Build ' + gitHash">v{{ gitHash }}</span>
     </footer>
     <Toasts />
@@ -132,6 +137,11 @@ onMounted(async () => {
   border-top: 1px solid var(--border);
   flex-shrink: 0;
 }
+.app-footer-link {
+  color: var(--text-muted);
+  text-decoration: none;
+}
+.app-footer-link:hover { color: var(--text); text-decoration: underline; }
 .app-version {
   font-family: monospace;
   letter-spacing: 0.02em;
