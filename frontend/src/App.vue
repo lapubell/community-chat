@@ -96,7 +96,7 @@ onMounted(async () => {
       <a class="app-footer-link" :href="repoUrl" target="_blank" rel="noopener noreferrer">
         &copy; {{ year }} &middot; Community Chat
       </a>
-      <span class="app-version" :title="'Build ' + gitHash">v{{ gitHash }}</span>
+      <span class="app-version" :title="'Build ' + gitHash">v: {{ gitHash }}</span>
     </footer>
     <Toasts />
     <button v-if="installPrompt" class="btn install-banner" @click="handleInstall">
