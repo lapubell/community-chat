@@ -1,5 +1,9 @@
 # Stage 1: build the Vue frontend
 FROM node:22-alpine AS frontend
+# Short git SHA of the commit being built, baked into the app footer. Computed
+# on the host (the build context excludes .git) and passed via --build-arg.
+ARG APP_GIT_HASH=unknown
+ENV APP_GIT_HASH=$APP_GIT_HASH
 WORKDIR /web
 COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm install --no-audit --no-fund

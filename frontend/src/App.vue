@@ -11,6 +11,9 @@ const chat = useChatStore();
 const route = useRoute();
 const router = useRouter();
 
+// Short git SHA of this build (injected at build time; "dev" locally).
+const gitHash = import.meta.env.APP_GIT_HASH || "dev";
+
 const installPrompt = ref(null);
 const notifPermission = ref("Notification" in window ? Notification.permission : "denied");
 let unsub = null;
@@ -86,6 +89,10 @@ onMounted(async () => {
     <main class="app-main">
       <RouterView />
     </main>
+    <footer class="app-footer">
+      <span>&copy; 2026 &middot; Community Chat</span>
+      <span class="app-version" :title="'Build ' + gitHash">v{{ gitHash }}</span>
+    </footer>
     <Toasts />
     <button v-if="installPrompt" class="btn install-banner" @click="handleInstall">
       Install app
@@ -112,5 +119,21 @@ onMounted(async () => {
   z-index: 50;
   box-shadow: var(--shadow);
   padding: 12px 24px;
+}
+.app-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 16px;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg-elevated);
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.app-version {
+  font-family: monospace;
+  letter-spacing: 0.02em;
 }
 </style>

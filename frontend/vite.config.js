@@ -3,7 +3,15 @@ import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
 import { viteStaticCopy } from "vite-plugin-static-copy";
 
+// Short git SHA of the build (injected by the Dockerfile via APP_GIT_HASH;
+// falls back to "dev" in local dev). Shown in the app footer so you can tell
+// which version is running on a phone.
+const APP_GIT_HASH = process.env.APP_GIT_HASH || "dev";
+
 export default defineConfig({
+  define: {
+    "import.meta.env.APP_GIT_HASH": JSON.stringify(APP_GIT_HASH),
+  },
   plugins: [
     vue(),
     viteStaticCopy({

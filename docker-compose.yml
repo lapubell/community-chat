@@ -3,6 +3,10 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+      args:
+        # Short git SHA shown in the app footer. Computed on the host at build
+        # time (see README / deploy notes). Falls back to "unknown".
+        APP_GIT_HASH: ${APP_GIT_HASH:-unknown}
     image: community-chat:latest
     container_name: community-chat
     # The host port is configurable via PORT in a .env file (default 8983).
