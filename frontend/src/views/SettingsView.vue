@@ -33,6 +33,10 @@ const notifyReplies = ref(true);
 const savingSettings = ref(false);
 
 const push = usePush();
+// Local checkbox state. Bound to the input so a failed subscribe (which leaves
+// push.subscribed false) can be visually reverted — Vue won't reset a
+// :checked binding whose reactive value didn't change.
+const pushToggle = ref(false);
 
 const invites = ref([]);
 const inviteMaxUses = ref(1);
@@ -48,7 +52,8 @@ onMounted(async () => {
     bio.value = me.value.bio || "";
     avatarPreview.value = me.value.avatar_url;
   }
-  pushStatus();
+  await pushStatus();
+  pushToggle.value = push.subscribed;
   try {
     const s = await api.get("/api/auth/me/settings");
     dnd.value = s.do_not_disturb;
@@ -143,11 +148,13 @@ async function saveSettings() {
 async function onPushToggle(checked) {
   if (checked) {
     const ok = await subscribePush();
+    pushToggle.value = ok; // revert the checkbox if the subscribe failed
     if (!ok && push.error) toast(push.error, "error");
     else toast("Notifications enabled", "success");
   } else {
-    await unsubscribePush();
-    toast("Notifications disabled", "success");
+    const ok = await unsubscribePush();
+    pushToggle.value = !ok;
+    toast(ok ? "Notifications disabled" : "Could not disable notifications", ok ? "success" : "error");
   }
 }
 
@@ -244,7 +251,7 @@ function inviteLink(code) {
               <input
                 type="checkbox"
                 class="toggle"
-                :checked="push.subscribed"
+                v-model="pushToggle"
                 :disabled="!push.supported || push.permission === 'denied' || push.busy"
                 @change="onPushToggle($event.target.checked)"
               />
