@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, ref } from "vue";
+import { onBeforeUnmount, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useAuthStore, onWsEvent } from "@/stores/auth";
 import { useChatStore } from "@/stores/chat";
@@ -65,8 +65,22 @@ function handleWsMessage(event, msg) {
   }
 }
 
+// Reconnect the WebSocket whenever the app regains focus or the network
+// returns — this is what makes a dropped socket (e.g. from a server rebuild)
+// recover automatically as long as the phone has connectivity.
+function onNetworkOnline() {
+  if (auth.isAuthenticated) auth.nudgeReconnect();
+}
+function onVisibilityChange() {
+  if (document.visibilityState === "visible" && auth.isAuthenticated) {
+    auth.nudgeReconnect();
+  }
+}
+
 onMounted(async () => {
   window.addEventListener("beforeinstallprompt", beforeInstallPrompt);
+  window.addEventListener("online", onNetworkOnline);
+  document.addEventListener("visibilitychange", onVisibilityChange);
   chat.initWs();
   unsub = onWsEvent(handleWsMessage);
 
@@ -78,6 +92,12 @@ onMounted(async () => {
     await chat.loadRooms().catch(() => {});
     requestNotifPermission();
   }
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener("beforeinstallprompt", beforeInstallPrompt);
+  window.removeEventListener("online", onNetworkOnline);
+  document.removeEventListener("visibilitychange", onVisibilityChange);
 });
 </script>
 
