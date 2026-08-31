@@ -7,8 +7,15 @@ let id = 0;
 // works no matter how it's called (it's exposed on the reactive object so
 // the component can destructure it alongside `items`, but must not rely on
 // `this` — a bare call would leave `this` undefined).
+//
+// IMPORTANT: mutate the array IN PLACE (splice) rather than reassigning
+// state.items. The component destructures `items` once at setup, so the
+// template holds a reference to the original array; reassigning state.items
+// to a new array would leave the template pointing at the old (stale) one and
+// the toast would never disappear.
 function dismiss(tid) {
-  state.items = state.items.filter((t) => t.id !== tid);
+  const i = state.items.findIndex((t) => t.id === tid);
+  if (i !== -1) state.items.splice(i, 1);
 }
 
 state.dismiss = dismiss;
