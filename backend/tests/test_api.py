@@ -178,6 +178,26 @@ def test_user_avatar_processed_to_webp():
     assert r.status_code == 415
 
 
+def test_oversized_avatar_rejected():
+    # A >25MB image must be rejected with 413 (avatars are shrunk on upload,
+    # so the source cap is looser than general files, but still bounded).
+    import app.routers.upload_utils as uu
+
+    c = client()
+    token, _ = make_user(c, "frank")
+    big = b"0" * (26 * 1024 * 1024)  # 26 MB
+    r = c.post(
+        "/api/auth/me/avatar",
+        headers=auth(token),
+        files={"file": ("big.jpg", big, "image/jpeg")},
+    )
+    # 413 (too large) — not a crash/500.
+    assert r.status_code == 413
+    assert "25 MB" in r.json().get("detail", "") or "too large" in r.json().get("detail", "").lower()
+    # Sanity: the constant is what we expect.
+    assert uu.MAX_AVATAR_SIZE == 25 * 1024 * 1024
+
+
 def test_invite_lifecycle():
     c = client()
     t1, _ = make_user(c, "carol", as_admin=True)

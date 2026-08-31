@@ -29,12 +29,17 @@ async function request(path, options = {}) {
     throw new Error(res.status === 401 ? "Unauthorized" : "Session expired");
   }
   if (!res.ok) {
-    let detail = res.statusText;
+    let detail = res.statusText || `Request failed (${res.status})`;
     try {
       const data = await res.json();
       if (typeof data.detail === "string") detail = data.detail;
       else if (Array.isArray(data.detail)) detail = data.detail.map((d) => d.msg).join(", ");
-    } catch {}
+    } catch {
+      // Non-JSON body (e.g. nginx's HTML error page). Give a friendly
+      // per-status message instead of a raw/empty statusText.
+      if (res.status === 413) detail = "File too large to upload";
+      else if (res.status === 500) detail = "Server error — try again";
+    }
     throw new Error(detail);
   }
   if (res.status === 204) return null;

@@ -22,7 +22,12 @@ UPLOAD_DIR = Path(
     )
 )
 
-MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB
+MAX_UPLOAD_SIZE = 10 * 1024 * 1024  # 10 MB — general file uploads (PDFs, videos, etc.)
+
+# Avatars are shrunk to 500x500 WebP on upload, so the *source* image can be
+# much larger (a phone photo) without costing much in storage. Allow up to
+# 25 MB for avatar uploads; nginx client_max_body_size must be >= this.
+MAX_AVATAR_SIZE = 25 * 1024 * 1024  # 25 MB
 
 # Families only allow images (this is an avatar). The general files router has
 # its own broader allow-list; this one is image-only.
@@ -88,8 +93,10 @@ def process_avatar(content: bytes, *, prefix: str) -> tuple[str, int]:
     encodes as WebP. Returns (storage_name, size). Raises 415 for a
     non-decodable image and 413 for an oversized upload.
     """
-    if len(content) > MAX_UPLOAD_SIZE:
-        raise HTTPException(status_code=413, detail="File too large (max 10 MB)")
+    if len(content) > MAX_AVATAR_SIZE:
+        raise HTTPException(
+            status_code=413, detail="Image too large (max 25 MB for avatars)"
+        )
 
     try:
         img = Image.open(io.BytesIO(content))
