@@ -4,6 +4,7 @@ import { useAuthStore } from "@/stores/auth";
 import { useChatStore } from "@/stores/chat";
 import Avatar from "./Avatar.vue";
 import Reactions from "./Reactions.vue";
+import Modal from "./Modal.vue";
 
 const props = defineProps({
   message: Object,
@@ -18,6 +19,13 @@ const menuOpen = ref(false);
 const editing = ref(false);
 const editText = ref(props.message.text || "");
 const lightbox = ref(false);
+const avatarModal = ref(false);
+
+// Only other people's avatars open the zoom modal (clicking your own is a no-op).
+function openAvatar() {
+  if (props.isOwn) return;
+  avatarModal.value = true;
+}
 
 async function saveEdit() {
   if (props.channel !== "group") return;
@@ -39,6 +47,16 @@ function isImage(file) {
   return file?.file_content_type?.startsWith("image/");
 }
 
+function initials(user) {
+  const name = user?.display_name || user?.handle || "?";
+  return name
+    .split(/\s+/)
+    .map((w) => w[0])
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+}
+
 function openLightbox() {
   lightbox.value = true;
 }
@@ -56,7 +74,15 @@ function timeStr(iso) {
 
 <template>
   <div class="bubble-wrap" :class="{ own: isOwn }">
-    <Avatar v-if="!isOwn && channel === 'group'" :user="message.author" size="sm" />
+    <Avatar
+      v-if="!isOwn && channel === 'group'"
+      :user="message.author"
+      size="sm"
+      class="avatar-clickable"
+      role="button"
+      :aria-label="'View ' + (message.author.display_name || 'avatar') + 's avatar'"
+      @click="openAvatar"
+    />
     <div class="bubble-col">
       <div v-if="!isOwn" class="meta-row">
         <span class="author">{{ message.author.display_name }}</span>
@@ -116,6 +142,16 @@ function timeStr(iso) {
     <div v-if="lightbox && isImage(message)" class="lightbox" @click="lightbox = false">
       <img :src="message.file_url" class="lightbox-img" @click.stop />
     </div>
+
+    <Modal v-model:open="avatarModal" :title="message.author?.display_name || 'Avatar'">
+      <img
+        v-if="message.author?.avatar_url"
+        :src="message.author.avatar_url"
+        class="avatar-zoom"
+        :alt="message.author.display_name || 'avatar'"
+      />
+      <div v-else class="avatar-zoom-placeholder">{{ initials(message.author) }}</div>
+    </Modal>
   </div>
 </template>
 
@@ -221,4 +257,25 @@ function timeStr(iso) {
   cursor: zoom-out;
 }
 .lightbox-img { max-width: 92vw; max-height: 92vh; object-fit: contain; }
+.avatar-clickable { cursor: zoom-in; }
+.avatar-zoom {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  border-radius: var(--radius-sm);
+  display: block;
+}
+.avatar-zoom-placeholder {
+  width: 200px;
+  height: 200px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 64px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+}
 </style>
